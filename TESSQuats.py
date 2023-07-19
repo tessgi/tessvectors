@@ -1,7 +1,3 @@
-#Camera, Sector = 1, 1
-#Processing steps: grab a 20s, 120s, FFI cutout to get midpoints
-
-#Get the center of a CCD for a given Camera/Sector/CCD
 import astropy.io.fits as fits
 import matplotlib.pyplot as plt
 import numpy as np
@@ -123,13 +119,22 @@ def get_quat_data(Sector):
     QuatData=fits.open(filelist[0])
     return QuatData
 
+def crm_bin(quats):
+    #we could re-write this to be O(N) if we just step through the array checking highest/lowest values
+    if (len(quats) > 2):
+        return np.median(np.sort(quats)[1:len(quats)-1])
+    else:
+        return
+
+
+
 def Bin_Cadence(cadence, CameraData, Camera):
     ExpTime = np.double(abs(cadence[1]-cadence[0])) # Should this be hard-coded instead? prbly med
     #print(ExpTime)
     SubArr_Len = int(2 * (ExpTime * (60. * 60. * 24.) / 2.))
     Time_Len = len(cadence)
     Source_Len = len(CameraData['Time'])
-    BinnedQuats=np.zeros((17, Time_Len), dtype=np.double) #( 8 Quat Vectors * 3 + 2 (Tmin/max) + #GS + MSTot + FoM)
+    BinnedQuats=np.zeros((21, Time_Len), dtype=np.double) #( 8 Quat Vectors * 3 + 2 (Tmin/max) + #GS + MSTot + FoM)
     submask_length = 2 * ExpTime
     min_ind = int(0)
     max_ind = SubArr_Len # Days -> Seconds / 2 S per Quat Exp
@@ -172,27 +177,31 @@ def Bin_Cadence(cadence, CameraData, Camera):
         #print(f"Mask: {mask}")
         #print(f"Mask_Len: {len(mask[0])}")
         if(len(mask[0]) != 0):
-            BinnedQuats[0][i] = np.min(CameraData['Time'][mask]) #Min Midpoint Binned
-            BinnedQuats[1][i] = np.max(CameraData['Time'][mask]) #Max Midpoint Binned
-            BinnedQuats[2][i] = np.min(CameraData[f"C{Camera:d}_FOM"][mask]) # Figure of Merit 
-            BinnedQuats[3][i] = np.min(CameraData[f"C{Camera:d}_NUM_GSUSED"][mask]) # Number of Guide Stars Used # remove this or FoM
+            BinnedQuats[0][i] = np.min(SubArr['Time'][mask]) #Min Midpoint Binned
+            BinnedQuats[1][i] = np.max(SubArr['Time'][mask]) #Max Midpoint Binned
+            BinnedQuats[2][i] = np.min(SubArr[f"C{Camera:d}_FOM"][mask]) # Figure of Merit 
+            BinnedQuats[3][i] = np.min(SubArr[f"C{Camera:d}_NUM_GSUSED"][mask]) # Number of Guide Stars Used # remove this or FoM
             BinnedQuats[4][i] = len(mask[0]) # N quats used - diagnose wierdness post binning
             
-            BinnedQuats[5][i] =   np.median(CameraData[f"C{Camera:d}_Q1"][mask])
-            BinnedQuats[6][i] =   np.std(CameraData[f"C{Camera:d}_Q1"][mask])
-            BinnedQuats[7][i] =   sigma_clipped_stats(CameraData[f"C{Camera:d}_Q1"][mask])[2]
+            BinnedQuats[5][i] =   np.median(SubArr[f"C{Camera:d}_Q1"][mask])
+            BinnedQuats[6][i] =   np.std(SubArr[f"C{Camera:d}_Q1"][mask])
+            BinnedQuats[7][i] =   sigma_clipped_stats(SubArr[f"C{Camera:d}_Q1"][mask])[2]
+            BinnedQuats[8][i] =   crm_bin(SubArr[f"C{Camera:d}_Q1"][mask])
+
+            BinnedQuats[9][i] =   np.median(SubArr[f"C{Camera:d}_Q2"][mask])
+            BinnedQuats[10][i] =  np.std(SubArr[f"C{Camera:d}_Q2"][mask])
+            BinnedQuats[11][i] =  sigma_clipped_stats(SubArr[f"C{Camera:d}_Q2"][mask])[2]
+            BinnedQuats[12][i] =  crm_bin(SubArr[f"C{Camera:d}_Q2"][mask])
             
-            BinnedQuats[8][i] =   np.median(CameraData[f"C{Camera:d}_Q2"][mask])
-            BinnedQuats[9][i] =   np.std(CameraData[f"C{Camera:d}_Q2"][mask])
-            BinnedQuats[10][i] =  sigma_clipped_stats(CameraData[f"C{Camera:d}_Q2"][mask])[2]
+            BinnedQuats[13][i] =  np.median(SubArr[f"C{Camera:d}_Q3"][mask])
+            BinnedQuats[14][i] =  np.std(SubArr[f"C{Camera:d}_Q3"][mask])
+            BinnedQuats[15][i] =  sigma_clipped_stats(SubArr[f"C{Camera:d}_Q3"][mask])[2]
+            BinnedQuats[16][i] =  crm_bin(SubArr[f"C{Camera:d}_Q3"][mask])
             
-            BinnedQuats[11][i] =  np.median(CameraData[f"C{Camera:d}_Q3"][mask])
-            BinnedQuats[12][i] =  np.std(CameraData[f"C{Camera:d}_Q3"][mask])
-            BinnedQuats[13][i] =  sigma_clipped_stats(CameraData[f"C{Camera:d}_Q3"][mask])[2]
-            
-            BinnedQuats[14][i] =  np.median(CameraData[f"C{Camera:d}_Q4"][mask])
-            BinnedQuats[15][i] =  np.std(CameraData[f"C{Camera:d}_Q4"][mask])
-            BinnedQuats[16][i] =  sigma_clipped_stats(CameraData[f"C{Camera:d}_Q4"][mask])[2]
+            BinnedQuats[17][i] =  np.median(SubArr[f"C{Camera:d}_Q4"][mask])
+            BinnedQuats[18][i] =  np.std(SubArr[f"C{Camera:d}_Q4"][mask])
+            BinnedQuats[19][i] =  sigma_clipped_stats(SubArr[f"C{Camera:d}_Q4"][mask])[2]
+            BinnedQuats[20][i] =  crm_bin(SubArr[f"C{Camera:d}_Q4"][mask])
            
             min_ind = min_ind + int(np.max(mask[0]) + 1)
 
@@ -229,27 +238,72 @@ def Bin_Camera(CameraData,TimeArr, Camera):
     return Bin20, Bin120, BinFFI
 
 def write_quat_sector_camera(BinnedQuats, TimeArr, Sector, Camera):
-    Binned_Dir='binned_quats'
-    typedict = {1:'fast', 2:'short', 3:'long'}
+    typedict = {1:'020', 2:'120', 3:'FFI'}
+    Binned_Dir='quaternion_products'
 
     for Quat, Time, i in zip(BinnedQuats, TimeArr, [1,2,3]):
-        fname = f"{Binned_Dir}/tess_BinQuats_S{Sector:03d}_C{Camera}_{typedict[i]}.csv"
+        from datetime import date
+
+        fname = f"{Binned_Dir}/{typedict[i]}_Cadence/TessQuats_S{Sector:03d}_C{Camera}_{typedict[i]}.csv"
         print(f"\t\tWriting Sector: {Sector} Camera: {Camera} Cadence {typedict[i]} to:")
         print(f"\t\t\t to {fname}")
         
         if (Time is not None):
-            df = pd.DataFrame(data={'MidTime':Time[0], 'TimeCorr':Time[1],
-                                    'CadenceNo':Time[2], 'Quality':Time[3], 'ExpTime':[typedict[i]] * len(Time[0]), 
+            # First write the File Header
+            # this will over-write by default
+            with open(fname, 'w') as f:
+                f.write(f"# TESS Quaternions downsampled to end-user cadences\n")
+                f.write(f"# Sector: \t{Sector}\n")
+                f.write(f"# Camera: \t{Camera}\n")
+                f.write(f"# Cadence:\t{typedict[i]}\n")
+                f.write(f"# This file contains TESS quaternions that have been downsampled from the TESS\n")
+                f.write(f"# native 2-second exposures to the end-user product cadence (e.g .20s/120s/FFI)\n")
+                f.write(f"# For more information See:\n")
+                f.write(f"#     - The github repo that created this file at https://github.com/tylerapritchard/TESSQuats\n")# This will presumably move to tessgi at some point
+                f.write(f"#     - The TESS Instrument Handbook at https://archive.stsci.edu/missions-and-data/tess\n")
+                f.write(f"#     - The original quaternion engineering files at https://archive.stsci.edu/missions-and-data/tess/data-products\n")
+                f.write(f"# Please check the TESS Sector Data Release Notes at https://archive.stsci.edu/tess/tess_drn.html\n")
+                f.write(f"# for information regarding the telescope pointing and tracking (in addition to other image quality information) as\n")
+                f.write(f"# for some sectors/cameras alternative camera quaternions are substituted for a variety of programattic reasons.\n\n")
+                f.write(f"# Column Descriptions:\n")
+                f.write(f"# Cadence #: Cadence index from the source tpf\n")
+                # NOTE TO SELF WE SHOULD PROBABLY RE-CONVERT THE TIMES TO BE LIKE LK TIMES FOR THE END USER
+                f.write(f"# MidTime: The exposure midpoint in spacecraft time (i.e. tpf.time - tpf.timecorr)\n")
+                f.write(f"# TimeCorr: The Time Correction for spacecraft to Barycentric time at that cadence\n")
+                f.write(f"# Quality: Quality bitmask at that cadence from the tpf - see the TESS Instrument handbook for more info\n")
+                # We could remove ExpTime/Sector/Camera and just keep them in the metadata, but I could see them being
+                # useful like this
+                f.write(f"# ExpTime: The final cadence binning (20s/120s/FFI)\n")
+                f.write(f"# Sector: The TESS observing Sector for the source data\n")
+                f.write(f"# Camera: The TESS camera for the source data\n")
+                f.write(f"# Quat_Start: The timestamp of the earliest quaternion used in the bin\n")
+                f.write(f"# Quat_Stop: The timestamp of the last quaternion used in the bin\n")
+                f.write(f"# Quat_MIN_FOM: The worst Figure of Merit from the source quaternions\n")
+                f.write(f"# Quat_MIN_NUM_GSUSED: The lowest number of guide stars used in the source quaternions\n")
+                f.write(f"# Quat_NBinned: The number of quaternions binned into this final result.\n")
+                f.write(f"# Quat[1-4]_Med: The Quaternion #[1-4] median value from the binned values \n")
+                f.write(f"# Quat[1-4]_StdDev: The standard deviation of Quaternion #[1-4] binned values\n")
+                f.write(f"# Quat[1-4]_SigClip: The Sigma-Clipped Standard Deviation of Quaternion #[1-4] binned values\n")
+                f.write(f"# Quat[1-4]_CRM_Med: The Quaternion #[1-4] median value with the highest and lowest values excluded \n\n")
+            
+                f.write(f"# Processing Date-Time: {date.today()}\n\n")
+            df = pd.DataFrame(data={'Cadence':Time[2], 'MidTime':Time[0], 'TimeCorr':Time[1],
+                                    'Quality':Time[3], 'ExpTime':[typedict[i]] * len(Time[0]), 
                                     'Sector': [Sector] * len(Time[0]), 'Camera': Camera  * len(Time[0]),
-                                   'Quat_Start':Quat[0], 'Quat_Stop':Quat[1], 
-                                   'Quat_MIN_FOM':Quat[2],'Quat_MIN_NUM_GSUSED':Quat[3],
-                                   'Quat_NBinned': Quat[4], 
-                                   'Quat1_Med': Quat[5], 'Quat1_StdDev': Quat[6], 'Quat1_SigClip':Quat[7],
-                                   'Quat2_Med': Quat[8], 'Quat2_StdDev': Quat[9], 'Quat2_SigClip':Quat[10], 
-                                   'Quat3_Med': Quat[11],'Quat3_StdDev': Quat[12],'Quat3_SigClip':Quat[13],
-                                   'Quat4_Med': Quat[14],'Quat4_StdDev': Quat[15],'Quat4_SigClip':Quat[16]}
+                                    'Quat_Start':Quat[0], 'Quat_Stop':Quat[1], 
+                                    'Quat_MIN_FOM':Quat[2],'Quat_MIN_NUM_GSUSED':Quat[3],'Quat_NBinned': Quat[4], 
+                                    'Quat1_Med': Quat[5], 'Quat1_StdDev': Quat[6], 'Quat1_StdDev_SigClip':Quat[7],'Quat1_CRM_Med': Quat[8], 
+                                    'Quat2_Med': Quat[9], 'Quat2_StdDev': Quat[10],'Quat2_StdDev_SigClip':Quat[11],'Quat2_CRM_Med': Quat[12], 
+                                    'Quat3_Med': Quat[13],'Quat3_StdDev': Quat[14],'Quat3_StdDev_SigClip':Quat[15],'Quat3_CRM_Med': Quat[16], 
+                                    'Quat4_Med': Quat[17],'Quat4_StdDev': Quat[18],'Quat4_StdDev_SigClip':Quat[19],'Quat4_CRM_Med': Quat[20]}
                              )
-            df.to_csv(fname)
+            df.astype({'Cadence':int, 
+                       'Quality':int, 
+                       'Sector': int, 
+                       'Camera':int}
+                       #'Quat_MIN_NUM_GSUSED':int,
+                       #'Quat_NBinned': int}
+                    ).to_csv(fname, index=False, mode = "a")
     
 def bin_Sector(Sector):
     print(f"Starting Sector: {Sector}")
@@ -259,4 +313,8 @@ def bin_Sector(Sector):
         TimeArr = get_camera_sector_cadences(Sector, Camera)
         BinnedQuats = Bin_Camera(QuatData[Camera].data, TimeArr, Camera)
         write_quat_sector_camera(BinnedQuats, TimeArr, Sector, Camera)
-        return Sector
+
+
+def create_diagnostic_timeseries(Sector, Camera, Cadence):
+
+    return
