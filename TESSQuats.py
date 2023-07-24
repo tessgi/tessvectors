@@ -1,16 +1,19 @@
 import astropy.io.fits as fits
+from astropy.stats import sigma_clipped_stats
 import matplotlib.pyplot as plt
-import numpy as np
+from matplotlib import cm
 import lightkurve as lk
+from lightkurve import TessQualityFlags
+import numpy as np
 import subprocess
 import warnings
 import logging
-import astropy.io.fits as fits
 import requests
 from bs4 import BeautifulSoup
 import fitsio
 import pandas as pd
-from astropy.stats import sigma_clipped_stats
+import os
+
 
 import multiprocessing
 from itertools import product
@@ -314,7 +317,118 @@ def bin_Sector(Sector):
         BinnedQuats = Bin_Camera(QuatData[Camera].data, TimeArr, Camera)
         write_quat_sector_camera(BinnedQuats, TimeArr, Sector, Camera)
 
+def quality_to_color(qual):
+    
+    default = TessQualityFlags.create_quality_mask(qual, bitmask='default')
+    hard = TessQualityFlags.create_quality_mask(qual, bitmask='hard')
+    hardest = TessQualityFlags.create_quality_mask(qual, bitmask='hardest')
+
+    carr = np.zeros(len(qual))
+    carr[~ hardest] = 0.33
+    carr[~ hard] = 0.66
+    carr[~ default] = 1
+    
+    return carr
+
+def plot_quat(axs, time, quat, dev, qual,QuatLabel):
+        
+        nsigma = 1
+        
+        norm = np.median(quat)
+        norm_quat = quat / norm
+        norm_dev = dev / norm
+        mean_norm_dev = np.median(dev / norm)
+        
+        tmin=np.min(time)
+        tmax=np.max(time)
+        
+        ymin = norm - 3 * mean_norm_dev
+        ymax = norm + 3 * mean_norm_dev
+        
+        im = axs.imshow(np.vstack((qual,)), 
+                        extent=(tmin, tmax, ymin, ymax), 
+                        interpolation='nearest', aspect='auto', 
+                        cmap=cm.PuRd, vmax=1)  
+        
+        axs.scatter(time, norm_quat, s=3, 
+                    label = 'Median Quaternion Value', color='k')
+        
+        axs.fill_between(time, 
+                            norm_quat - (nsigma * norm_dev),
+                            norm_quat + (nsigma * norm_dev),
+                            alpha = 0.6, color='grey')
+        
+        axs.set_xlim(tmin, tmax)        
+        axs.set_ylim(ymin, ymax)
+        
+        axs.tick_params(axis='x', labelsize=0)
+        
+        axs.set_ylabel(f"{QuatLabel}", weight='bold', size=24 )
+        axs.set_yticks([])
+        
+        return im
+
+def create_diagnostics_bulk(SectorCameraCadence):
+    Sector, Camera, Cadence = SectorCameraCadence
+    create_diagnostic_timeseries(Sector, Camera, Cadence)
+    create_diagnostic_periodogram(Sector, Camera, Cadence)
 
 def create_diagnostic_timeseries(Sector, Camera, Cadence):
+    typedict = typedict = {1:'020', 2:'120', 3:'FFI'}
+    if(type(Cadence) != str):
+        cadence_name = typedict[Cadence]
+    else:
+        cadence_name = Cadence
+    Binned_Dir='quaternion_products'
+    fname = f"{Binned_Dir}/{cadence_name}_Cadence/TessQuats_S{Sector:03d}_C{Camera}_{cadence_name}.csv"
+    
+    nplots=3
+    if(os.path.isfile(fname)):
+        quatdf = pd.read_csv(fname, comment='#',index_col=False)
+        qual_im = quality_to_color(quatdf.Quality)
 
-    return
+        fig, axs = plt.subplots(nplots,1,figsize=(15,nplots*10))
+        im0 = plot_quat(axs[0], quatdf.MidTime, quatdf.Quat1_Med, quatdf.Quat1_StdDev, qual_im, 'Quaternion 1')
+        im1 = plot_quat(axs[1], quatdf.MidTime, quatdf.Quat2_Med, quatdf.Quat2_StdDev, qual_im, 'Quaternion 2')
+        im2 = plot_quat(axs[2], quatdf.MidTime, quatdf.Quat3_Med, quatdf.Quat3_StdDev, qual_im, 'Quaternion 3')
+        plt.subplots_adjust(hspace=0)
+        axs[0].set_title(f"TESS Sector {Sector} Camera {Camera} Quaternions",
+                         weight="bold", size=26)
+        axs[-1].tick_params(axis='x', labelsize=18)
+        axs[-1].set_xlabel("TESS BTJD", weight='bold', size=24)
+        cax = plt.axes([0.92, 0.11, 0.075, 0.77])
+        cbar = plt.colorbar(mappable = im1, cax=cax, 
+                            ticks=[0,0.33,0.66,1])
+        cbar.ax.set_yticklabels(['None', 'Hardest', 'Hard', 'Default'], 
+                                size=18)
+        cbar.set_label("Softest Lightkurve Quality Mask Flagged (Lower is Better)", 
+                       size=24, weight='bold')
+        #plt.tight_layout()
+        fout = f"{Binned_Dir}/{cadence_name}_Cadence/TessQuats_S{Sector:03d}_C{Camera}_{cadence_name}.png"
+        plt.savefig(fout, dpi=300,bbox_inches='tight')
+
+def run_bulk_diagnostics():
+    sector_list = range(1,65)
+    camera_list = range(1,4)
+    cadence_list = range(1,3)
+    inlist=list(product(sector_list,camera_list,cadence_list))
+    
+    from multiprocessing.pool import Pool
+    from itertools import product
+
+    pool=Pool(processes=7)
+    res=[]
+    for result in pool.map(create_diagnostics_bulk, inlist):
+        res=[res,result]
+    pool.close()
+
+def run_bulk_quats():
+    sector_list = range(1,65)
+
+    from multiprocessing.pool import Pool
+
+    pool=Pool(processes=7)
+    res=[]
+    for result in pool.map(bin_Sector, sector_list):
+        res=[res,result]
+    pool.close()
