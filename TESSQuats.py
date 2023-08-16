@@ -321,14 +321,15 @@ def quality_to_color(qual):
     
     default = TessQualityFlags.create_quality_mask(qual, bitmask='default')
     hard = TessQualityFlags.create_quality_mask(qual, bitmask='hard')
-    hardest = TessQualityFlags.create_quality_mask(qual, bitmask='hardest')
+    #hardest = TessQualityFlags.create_quality_mask(qual, bitmask='hardest')
 
     carr = np.zeros(len(qual))
-    carr[~ hardest] = 0.33
-    carr[~ hard] = 0.66
+    #carr[~ hardest] = 0.33
+    carr[~ hard] = 0.5
     carr[~ default] = 1
     
     return carr
+
 
 def plot_quat(axs, time, quat, dev, qual,QuatLabel):
         
@@ -368,11 +369,6 @@ def plot_quat(axs, time, quat, dev, qual,QuatLabel):
         
         return im
 
-def create_diagnostics_bulk(SectorCameraCadence):
-    Sector, Camera, Cadence = SectorCameraCadence
-    create_diagnostic_timeseries(Sector, Camera, Cadence)
-    create_diagnostic_periodogram(Sector, Camera, Cadence)
-
 def create_diagnostic_timeseries(Sector, Camera, Cadence):
     typedict = typedict = {1:'020', 2:'120', 3:'FFI'}
     if(type(Cadence) != str):
@@ -396,17 +392,72 @@ def create_diagnostic_timeseries(Sector, Camera, Cadence):
                          weight="bold", size=26)
         axs[-1].tick_params(axis='x', labelsize=18)
         axs[-1].set_xlabel("TESS BTJD", weight='bold', size=24)
+        
         cax = plt.axes([0.92, 0.11, 0.075, 0.77])
         cbar = plt.colorbar(mappable = im1, cax=cax, 
-                            ticks=[0,0.33,0.66,1])
-        cbar.ax.set_yticklabels(['None', 'Hardest', 'Hard', 'Default'], 
+                            ticks=[0,0.5,1])
+        cbar.ax.set_yticklabels(['Unflagged', 'Aggressive', 'Conservative'], 
                                 size=18)
-        cbar.set_label("Softest Lightkurve Quality Mask Flagged (Lower is Better)", 
+        cbar.set_label("Flagging Level", 
                        size=24, weight='bold')
+        
         #plt.tight_layout()
         fout = f"{Binned_Dir}/{cadence_name}_Cadence/TessQuats_S{Sector:03d}_C{Camera}_{cadence_name}.png"
         plt.savefig(fout, dpi=300,bbox_inches='tight')
 
+def plot_lsperiodogram(ax, time, median, std, QuatLabel):
+    lc = lk.LightCurve(data={'time': time , 'flux': std})
+    ls=lc.to_periodogram(maximum_period=13.5)
+    ls.plot(ax=ax,lw=0.1, color='k', ylabel=" ") 
+
+    ax.set_ylabel(f"{QuatLabel} Power", weight='bold', size=24 )
+    #ax.set_yticks([])
+    ax.tick_params(axis='y', labelsize=18)
+    ax.set_yscale("log")
+    ax.set_xscale("log")
+
+    ax.set_ylim(min(ls.power),max(ls.power))
+    
+    return
+
+def create_diagnostic_periodogram(Sector, Camera, Cadence):
+    typedict = typedict = {1:'020', 2:'120', 3:'FFI'}
+    if(type(Cadence) != str):
+        cadence_name = typedict[Cadence]
+    else:
+        cadence_name = Cadence
+    Binned_Dir='quaternion_products'
+    fname = f"{Binned_Dir}/{cadence_name}_Cadence/TessQuats_S{Sector:03d}_C{Camera}_{cadence_name}.csv"
+    
+    nplots=3
+    if(os.path.isfile(fname)):
+        quatdf = pd.read_csv(fname, comment='#',index_col=False)   
+        fig, axs = plt.subplots(nplots,1,figsize=(15,nplots*10))
+        plot_lsperiodogram(axs[0], quatdf.MidTime, quatdf.Quat1_Med, quatdf.Quat1_StdDev, 'Quaternion 1')
+        plot_lsperiodogram(axs[1], quatdf.MidTime, quatdf.Quat2_Med, quatdf.Quat2_StdDev, 'Quaternion 2')
+        plot_lsperiodogram(axs[2], quatdf.MidTime, quatdf.Quat3_Med, quatdf.Quat3_StdDev, 'Quaternion 3')
+        plt.subplots_adjust(hspace=0)
+
+        axs[0].set_title(f"TESS Sector {Sector} Camera {Camera} Quaternion Power Spectra",
+                         weight="bold", size=26)
+        axs[-1].tick_params(axis='x', labelsize=18)
+        axs[-1].set_xlabel("Period [days]", weight='bold', size=24)
+
+        forward = lambda x: x * 24. * 3600.
+        inverse = lambda x: x / 24. / 3600.
+        ax2 = axs[0].secondary_xaxis('top', functions=(forward, inverse))
+        ax2.set_xlabel("Period [seconds]", weight='bold', size=24)
+        ax2.tick_params(axis='x', labelsize=18)
+
+        plt.show()
+        fout = f"{Binned_Dir}/{cadence_name}_Cadence/TessQuats_Power_S{Sector:03d}_C{Camera}_{cadence_name}.png"
+        plt.savefig(fout, dpi=300,bbox_inches='tight')
+
+def create_diagnostics_bulk(SectorCameraCadence):
+    Sector, Camera, Cadence = SectorCameraCadence
+    create_diagnostic_timeseries(Sector, Camera, Cadence)
+    create_diagnostic_periodogram(Sector, Camera, Cadence)
+        
 def run_bulk_diagnostics():
     sector_list = range(1,65)
     camera_list = range(1,4)
@@ -422,12 +473,14 @@ def run_bulk_diagnostics():
         res=[res,result]
     pool.close()
 
-def run_bulk_quats():
+def run_bulk_quats(processes=7):
+    if (not processes):
+        processes = 7
     sector_list = range(1,65)
 
     from multiprocessing.pool import Pool
 
-    pool=Pool(processes=7)
+    pool=Pool(processes=processes)
     res=[]
     for result in pool.map(bin_Sector, sector_list):
         res=[res,result]
