@@ -122,6 +122,14 @@ def get_quat_data(Sector):
     QuatData=fits.open(filelist[0])
     return QuatData
 
+def get_emi_data(Sector):
+    base_url="https://archive.stsci.edu/missions/tess/engineering"
+    filelist = [file for file in listFD(base_url,f"sector{Sector:02d}-emi.fits")]
+    # Right now there is only 1 processing time per sector, this could change
+    print(f"\tGetting EMI Data for Sector: {Sector}")
+    EMIData=fits.open(filelist[0])
+    return EMIData
+
 def crm_bin(quats):
     #we could re-write this to be O(N) if we just step through the array checking highest/lowest values
     if (len(quats) > 2):
@@ -129,9 +137,7 @@ def crm_bin(quats):
     else:
         return
 
-
-
-def Bin_Cadence(cadence, CameraData, Camera):
+def Bin_Quat_Cadence(cadence, CameraData, Camera):
     ExpTime = np.double(abs(cadence[1]-cadence[0])) # Should this be hard-coded instead? prbly med
     #print(ExpTime)
     SubArr_Len = int(2 * (ExpTime * (60. * 60. * 24.) / 2.))
@@ -219,7 +225,7 @@ def Bin_Cadence(cadence, CameraData, Camera):
         # Add Cadence #
         # Quality Masks
         #print(max(mask), SubArr_Len)
-        max_ind = int(min_ind+SubArr_Len)
+        max_ind = int(min_ind)+int(SubArr_Len)
         if(max_ind > Source_Len): 
             max_ind=Source_Len-1
         
@@ -227,27 +233,128 @@ def Bin_Cadence(cadence, CameraData, Camera):
         print(f"\t\t\t\tWARNING: Zero Quaternions found for {Flag_ZeroMask} observed cadences")
     return BinnedQuats
 
-def Bin_Camera(CameraData,TimeArr, Camera):
+def EMI_Extension_Dict(ext_string):
+    # This could be done algorithmically, but thought it was less error prone this way
+    # I broke this out of the function b/c it was big & ugly
+     emi_dict={
+       "emi.earth_distance": 1,
+       "emi.earth_sc_elevation": 2,
+       "emi.earth_sc_azimuth": 3,
+       "emi.moon_distance": 4,
+       "emi.moon_sc_elevation": 5,
+       "emi.moon_sc_azimuth": 6,
+       "emi.cam1_earth_boresight_angle": 7,
+       "emi.cam1_earth_azimuth": 8,
+       "emi.cam1_moon_boresight_angle": 9,
+       "emi.cam1_moon_azimuth": 10,
+       "emi.cam2_earth_boresight_angle": 11,
+       "emi.cam2_earth_azimuth": 12,
+       "emi.cam2_moon_boresight_angle": 13,
+       "emi.cam2_moon_azimuth": 14,
+       "emi.cam3_earth_boresight_angle": 15,
+       "emi.cam3_earth_azimuth": 16,
+       "emi.cam3_moon_boresight_angle": 17,
+       "emi.cam3_moon_azimuth": 18,
+       "emi.cam4_earth_boresight_angle": 19,
+       "emi.cam4_earth_azimuth": 20,
+       "emi.cam4_moon_boresight_angle": 21,
+       "emi.cam4_moon_azimuth": 22
+       }
+     return emi_dict[ext_string]
+
+def Bin_EMI_Cadence(cadence, EMIData, Camera,type):
+    typedict = {1:'020', 2:'120', 3:'FFI'}
+    ExpTime = np.double(abs(cadence[1]-cadence[0])) # Should this be hard-coded instead? prbly med
+    if (isinstance(type, int)):
+        type=typedict[type]
+    match type:
+        case "020":
+            SubArr_Len=int(4)
+        case "120":
+            SubArr_Len=int(4)
+        case "FFI":
+            SubArr_Len= int((ExpTime / (EMIData[1].data['TIME'][1] - EMIData[1].data['TIME'][0])) * 4)
+        case _:
+            print("Error - Bin_EMI_Cadence can't match cadence type")
+            #throw a logging warning instead
+    
+    Time_Len = len(cadence)
+    Source_Len = len(EMIData[1].data['Time'])
+    BinnedEMI=np.zeros((6, Time_Len), dtype=np.double) #( (Earth + Moon) ** (Distance + Elev. + Azim.)
+    min_ind = int(0)
+    max_ind = int(SubArr_Len)
+   
+    for i in range(Time_Len - 1) :
+        if(i < (Time_Len - 2)):
+            while EMIData[1].data['Time'][max_ind] < cadence[i+1]: 
+                max_ind = max_ind + SubArr_Len
+
+        if(i >= 1):
+            while EMIData[1].data['Time'][min_ind]  > cadence[i-1]: 
+                min_ind = min_ind - 1 
+       
+
+        SubArr = EMIData[1].data['Time'][min_ind:max_ind]
+        match_ind = np.argmin(abs(np.double(SubArr - cadence[i])))
+        #print(f"i: {i} min_ind: {min_ind} max_ind:{max_ind} match_ind:{match_ind} Time_Len:{Time_Len} Subarr_Len:{SubArr_Len} ")
+
+        if(isinstance(min_ind, int)):
+            # Earth Distance
+            BinnedEMI[0][i] = EMIData[EMI_Extension_Dict('emi.earth_distance')].data[min_ind:max_ind]['VALUE'][match_ind]
+            # Earth Camera Elev
+            BinnedEMI[1][i] = EMIData[EMI_Extension_Dict(f'emi.cam{Camera}_earth_boresight_angle')].data[min_ind:max_ind]['VALUE'][match_ind] 
+            # EarthCamera Azim
+            BinnedEMI[2][i] = EMIData[EMI_Extension_Dict(f'emi.cam{Camera}_earth_azimuth')].data[min_ind:max_ind]['VALUE'][match_ind]
+            # Moon Distance
+            BinnedEMI[3][i] = EMIData[EMI_Extension_Dict('emi.moon_distance')].data[min_ind:max_ind]['VALUE'][match_ind]
+            # Moon Camera Elev
+            BinnedEMI[4][i] = EMIData[EMI_Extension_Dict(f'emi.cam{Camera}_moon_boresight_angle')].data[min_ind:max_ind]['VALUE'][match_ind] 
+            # Moon Camera Azim
+            BinnedEMI[5][i] = EMIData[EMI_Extension_Dict(f'emi.cam{Camera}_moon_azimuth')].data[min_ind:max_ind]['VALUE'][match_ind]
+        else:
+            print("Bin_EMI_Cadence can't match a datapoint")
+            #throw a real logging.warning
+        
+        min_ind = min_ind + int(match_ind)
+        max_ind = int(min_ind) + int(SubArr_Len)
+        if(max_ind > Source_Len): 
+            max_ind=Source_Len-1
+ 
+    return BinnedEMI
+
+def Bin_Quat_Camera(CameraData,TimeArr, Camera):
 
     Bin20 = None   
     if(TimeArr[0] is not None):
-        print("\t\tBinning 20s Data")
-        Bin20 = Bin_Cadence(TimeArr[0][0], CameraData, Camera)
-    print("\t\tBinning 120s Data")
-    Bin120 = Bin_Cadence(TimeArr[1][0], CameraData, Camera)
-    print("\t\tBinning FFI Data")
-    BinFFI = Bin_Cadence(TimeArr[2][0], CameraData, Camera)
+        print("\t\tBinning 20s Quaternion Data")
+        Bin20 = Bin_Quat_Cadence(TimeArr[0][0], CameraData, Camera)
+    print("\t\tBinning 120s Quaternion Data")
+    Bin120 = Bin_Quat_Cadence(TimeArr[1][0], CameraData, Camera)
+    print("\t\tBinning FFI Quaternion Data")
+    BinFFI = Bin_Quat_Cadence(TimeArr[2][0], CameraData, Camera)
         
     return Bin20, Bin120, BinFFI
 
-def write_quat_sector_camera(BinnedQuats, TimeArr, Sector, Camera):
-    typedict = {1:'020', 2:'120', 3:'FFI'}
-    Binned_Dir='quaternion_products'
+def Bin_EMI_Camera(EMIData,TimeArr, Camera):
+    EMI20 = None   
+    if(TimeArr[0] is not None):
+        print("\t\tBinning 20s EMI Data")
+        EMI20 = Bin_EMI_Cadence(TimeArr[0][0], EMIData, Camera,'020')
+    print("\t\tBinning 120s EMI Data")
+    EMI120 = Bin_EMI_Cadence(TimeArr[1][0], EMIData, Camera, '120')
+    print("\t\tBinning FFI EMI Data")
+    EMIFFI = Bin_EMI_Cadence(TimeArr[2][0], EMIData, Camera, 'FFI')
+        
+    return EMI20, EMI120, EMIFFI
 
-    for Quat, Time, i in zip(BinnedQuats, TimeArr, [1,2,3]):
+def write_vector_sector_camera(BinnedQuats, BinnedEMI, TimeArr, Sector, Camera):
+    typedict = {1:'020', 2:'120', 3:'FFI'}
+    Binned_Dir='TESSVectors_products'
+
+    for Quat, EMI, Time, i in zip(BinnedQuats, BinnedEMI, TimeArr, [1,2,3]):
         from datetime import date
 
-        fname = f"{Binned_Dir}/{typedict[i]}_Cadence/TessQuats_S{Sector:03d}_C{Camera}_{typedict[i]}.csv"
+        fname = f"{Binned_Dir}/{typedict[i]}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{typedict[i]}.csv"
         print(f"\t\tWriting Sector: {Sector} Camera: {Camera} Cadence {typedict[i]} to:")
         print(f"\t\t\t to {fname}")
         
@@ -288,8 +395,15 @@ def write_quat_sector_camera(BinnedQuats, TimeArr, Sector, Camera):
                 f.write(f"# Quat[1-4]_StdDev: The standard deviation of Quaternion #[1-4] binned values\n")
                 f.write(f"# Quat[1-4]_SigClip: The Sigma-Clipped Standard Deviation of Quaternion #[1-4] binned values\n")
                 f.write(f"# Quat[1-4]_CRM_Med: The Quaternion #[1-4] median value with the highest and lowest values excluded \n\n")
-            
+                f.write(f"# Earth_Distance: Distance to Earth in Re \n\n")            
+                f.write(f"# Earth_Camera_Angle: Angle of Earth from Camera Boresight in Degrees \n\n")            
+                f.write(f"# Earth_Camera_Azimuth: Azimuth of Earth around Camera Boresight in Degrees \n\n")            
+                f.write(f"# Moon_Distance: Distance to Moon in Re \n\n")            
+                f.write(f"# Moon_Camera_Angle: Angle of Moon from Camera Boresight in Degrees \n\n")            
+                f.write(f"# Moon_Camera_Azimuth: Azimuth of Moon around Camera Boresight in Degrees \n\n")            
+
                 f.write(f"# Processing Date-Time: {date.today()}\n\n")
+
             df = pd.DataFrame(data={'Cadence':Time[2], 'MidTime':Time[0], 'TimeCorr':Time[1],
                                     'Quality':Time[3], 'ExpTime':[typedict[i]] * len(Time[0]), 
                                     'Sector': [Sector] * len(Time[0]), 'Camera': Camera  * len(Time[0]),
@@ -298,7 +412,10 @@ def write_quat_sector_camera(BinnedQuats, TimeArr, Sector, Camera):
                                     'Quat1_Med': Quat[5], 'Quat1_StdDev': Quat[6], 'Quat1_StdDev_SigClip':Quat[7],'Quat1_CRM_Med': Quat[8], 
                                     'Quat2_Med': Quat[9], 'Quat2_StdDev': Quat[10],'Quat2_StdDev_SigClip':Quat[11],'Quat2_CRM_Med': Quat[12], 
                                     'Quat3_Med': Quat[13],'Quat3_StdDev': Quat[14],'Quat3_StdDev_SigClip':Quat[15],'Quat3_CRM_Med': Quat[16], 
-                                    'Quat4_Med': Quat[17],'Quat4_StdDev': Quat[18],'Quat4_StdDev_SigClip':Quat[19],'Quat4_CRM_Med': Quat[20]}
+                                    'Quat4_Med': Quat[17],'Quat4_StdDev': Quat[18],'Quat4_StdDev_SigClip':Quat[19],'Quat4_CRM_Med': Quat[20],
+                                    'Earth_Distance': EMI[0], 'Earth_Camera_Angle': EMI[1], 'Earth_Camera_Azimuth': EMI[2],
+                                    'Moon_Distance': EMI[3], 'Moon_Camera_Angle': EMI[4], 'Moon_Camera_Azimuth': EMI[5] 
+                                    }
                              )
             df.astype({'Cadence':int, 
                        'Quality':int, 
@@ -311,11 +428,13 @@ def write_quat_sector_camera(BinnedQuats, TimeArr, Sector, Camera):
 def bin_Sector(Sector):
     print(f"Starting Sector: {Sector}")
     QuatData = get_quat_data(Sector)
+    EMIData = get_emi_data(Sector)
     for Camera in [1,2,3,4]:
         print(f"\tStarting Camera: {Camera}")
         TimeArr = get_camera_sector_cadences(Sector, Camera)
-        BinnedQuats = Bin_Camera(QuatData[Camera].data, TimeArr, Camera)
-        write_quat_sector_camera(BinnedQuats, TimeArr, Sector, Camera)
+        BinnedQuats = Bin_Quat_Camera(QuatData[Camera].data, TimeArr, Camera)
+        BinnedEMI = Bin_EMI_Camera(EMIData, TimeArr, Camera)
+        write_vector_sector_camera(BinnedQuats, BinnedEMI, TimeArr, Sector, Camera)
 
 def quality_to_color(qual):
     
@@ -335,16 +454,17 @@ def plot_quat(axs, time, quat, dev, qual,QuatLabel):
         
         nsigma = 1
         
-        norm = np.median(quat)
+        #norm = np.nanmedian(np.double(quat[~np.isfinite(quat)]))
+        norm=np.nanmedian(quat)
         norm_quat = quat / norm
         norm_dev = dev / norm
-        mean_norm_dev = np.median(dev / norm)
-        
+        #mean_norm_dev = np.nanmedian(dev[~np.isfinite(dev)] / norm)
+        mean_norm_dev = np.nanmedian(dev / norm)
         tmin=np.min(time)
         tmax=np.max(time)
         
-        ymin = norm - 3 * mean_norm_dev
-        ymax = norm + 3 * mean_norm_dev
+        ymin = np.nanmedian(norm_quat) - 3 * mean_norm_dev
+        ymax = np.nanmedian(norm_quat) + 3 * mean_norm_dev
         
         im = axs.imshow(np.vstack((qual,)), 
                         extent=(tmin, tmax, ymin, ymax), 
@@ -370,13 +490,16 @@ def plot_quat(axs, time, quat, dev, qual,QuatLabel):
         return im
 
 def create_diagnostic_timeseries(Sector, Camera, Cadence):
-    typedict = typedict = {1:'020', 2:'120', 3:'FFI'}
+    import matplotlib as mpl
+    mpl.rcParams['agg.path.chunksize'] = 10000000000
+
+    typedict = {1:'020', 2:'120', 3:'FFI'}
     if(type(Cadence) != str):
         cadence_name = typedict[Cadence]
     else:
         cadence_name = Cadence
-    Binned_Dir='quaternion_products'
-    fname = f"{Binned_Dir}/{cadence_name}_Cadence/TessQuats_S{Sector:03d}_C{Camera}_{cadence_name}.csv"
+    Binned_Dir='TESSVectors_products'
+    fname = f"{Binned_Dir}/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}.csv"
     
     nplots=3
     if(os.path.isfile(fname)):
@@ -384,9 +507,9 @@ def create_diagnostic_timeseries(Sector, Camera, Cadence):
         qual_im = quality_to_color(quatdf.Quality)
 
         fig, axs = plt.subplots(nplots,1,figsize=(15,nplots*10))
-        im0 = plot_quat(axs[0], quatdf.MidTime, quatdf.Quat1_Med, quatdf.Quat1_StdDev, qual_im, 'Quaternion 1')
-        im1 = plot_quat(axs[1], quatdf.MidTime, quatdf.Quat2_Med, quatdf.Quat2_StdDev, qual_im, 'Quaternion 2')
-        im2 = plot_quat(axs[2], quatdf.MidTime, quatdf.Quat3_Med, quatdf.Quat3_StdDev, qual_im, 'Quaternion 3')
+        im = plot_quat(axs[0], quatdf.MidTime, quatdf.Quat1_Med, quatdf.Quat1_StdDev, qual_im, 'Quaternion 1')
+        im = plot_quat(axs[1], quatdf.MidTime, quatdf.Quat2_Med, quatdf.Quat2_StdDev, qual_im, 'Quaternion 2')
+        im = plot_quat(axs[2], quatdf.MidTime, quatdf.Quat3_Med, quatdf.Quat3_StdDev, qual_im, 'Quaternion 3')
         plt.subplots_adjust(hspace=0)
         axs[0].set_title(f"TESS Sector {Sector} Camera {Camera} Quaternions",
                          weight="bold", size=26)
@@ -394,16 +517,18 @@ def create_diagnostic_timeseries(Sector, Camera, Cadence):
         axs[-1].set_xlabel("TESS BTJD", weight='bold', size=24)
         
         cax = plt.axes([0.92, 0.11, 0.075, 0.77])
-        cbar = plt.colorbar(mappable = im1, cax=cax, 
+        cbar = plt.colorbar(mappable = im, cax=cax, 
                             ticks=[0,0.5,1])
         cbar.ax.set_yticklabels(['Unflagged', 'Aggressive', 'Conservative'], 
                                 size=18)
-        cbar.set_label("Flagging Level", 
+        cbar.set_label("Data Flagging Level (Lower Is Better)", 
                        size=24, weight='bold')
         
         #plt.tight_layout()
-        fout = f"{Binned_Dir}/{cadence_name}_Cadence/TessQuats_S{Sector:03d}_C{Camera}_{cadence_name}.png"
+        fout = f"{Binned_Dir}/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}_Quat.png"
         plt.savefig(fout, dpi=300,bbox_inches='tight')
+        #plt.show()
+        plt.close(fig)
 
 def plot_lsperiodogram(ax, time, median, std, QuatLabel):
     lc = lk.LightCurve(data={'time': time , 'flux': std})
@@ -421,13 +546,16 @@ def plot_lsperiodogram(ax, time, median, std, QuatLabel):
     return
 
 def create_diagnostic_periodogram(Sector, Camera, Cadence):
+    import matplotlib as mpl
+    mpl.rcParams['agg.path.chunksize'] = 10000000
+    
     typedict = typedict = {1:'020', 2:'120', 3:'FFI'}
     if(type(Cadence) != str):
         cadence_name = typedict[Cadence]
     else:
         cadence_name = Cadence
-    Binned_Dir='quaternion_products'
-    fname = f"{Binned_Dir}/{cadence_name}_Cadence/TessQuats_S{Sector:03d}_C{Camera}_{cadence_name}.csv"
+    Binned_Dir='TESSVectors_products'
+    fname = f"{Binned_Dir}/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}.csv"
     
     nplots=3
     if(os.path.isfile(fname)):
@@ -449,15 +577,123 @@ def create_diagnostic_periodogram(Sector, Camera, Cadence):
         ax2.set_xlabel("Period [seconds]", weight='bold', size=24)
         ax2.tick_params(axis='x', labelsize=18)
 
-        plt.show()
-        fout = f"{Binned_Dir}/{cadence_name}_Cadence/TessQuats_Power_S{Sector:03d}_C{Camera}_{cadence_name}.png"
+        fout = f"{Binned_Dir}/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}_QuatPower.png"
         plt.savefig(fout, dpi=300,bbox_inches='tight')
+        plt.close(fig)
 
-def create_diagnostics_bulk(SectorCameraCadence):
-    Sector, Camera, Cadence = SectorCameraCadence
-    create_diagnostic_timeseries(Sector, Camera, Cadence)
-    create_diagnostic_periodogram(Sector, Camera, Cadence)
+def create_diagnostic_ephemerides(Sector, Camera, Cadence):
+    import matplotlib as mpl
+    mpl.rcParams['agg.path.chunksize'] = 10000000
+
+
+    typedict = typedict = {1:'020', 2:'120', 3:'FFI'}
+    if(type(Cadence) != str):
+        cadence_name = typedict[Cadence]
+    else:
+        cadence_name = Cadence
+    Binned_Dir='TESSVectors_products'
+    fname = f"{Binned_Dir}/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}.csv"
+    
+    nplots=3
+    if(os.path.isfile(fname)):
+        quatdf = pd.read_csv(fname, comment='#',index_col=False)
+
+        qual_im = quality_to_color(quatdf.Quality)   
+        fig, axs = plt.subplots(nplots,1,figsize=(15,nplots*10))
         
+        axs[0].scatter(quatdf.MidTime,quatdf.Earth_Distance, 
+                       label = "Earth", color='seagreen')
+        axs[0].scatter(quatdf.MidTime,quatdf.Moon_Distance,  
+                       label = "Moon",  color='darkturquoise')
+        axs[0].legend(prop={'weight':'bold', 'size': 24},
+                      scatterpoints=3, markerscale=2)
+
+        tmin=np.min(quatdf.MidTime)
+        tmax=np.max(quatdf.MidTime)
+
+        ymin=min(min(quatdf.Earth_Distance), min(quatdf.Moon_Distance))
+        ymax=max(max(quatdf.Earth_Distance), max(quatdf.Moon_Distance))
+        im = axs[0].imshow(np.vstack((qual_im,)), 
+                           extent=(tmin, tmax, ymin, ymax), 
+                           interpolation='nearest', aspect='auto', 
+                           cmap=cm.PuRd, vmax=1)  
+
+        axs[1].scatter(quatdf.MidTime,quatdf.Earth_Camera_Angle, 
+                       label = "Earth", color='seagreen')
+        axs[1].scatter(quatdf.MidTime,quatdf.Moon_Camera_Angle, 
+                       label = "Moon",   color='darkturquoise')   
+        axs[1].legend(prop={'weight':'bold', 'size': 24},
+                      scatterpoints=3, markerscale=2)
+
+        ymin=min(min(quatdf.Earth_Camera_Angle), min(quatdf.Moon_Camera_Angle))
+        ymax=max(max(quatdf.Earth_Camera_Angle), max(quatdf.Moon_Camera_Angle))
+        im = axs[1].imshow(np.vstack((qual_im,)), 
+                           extent=(tmin, tmax, ymin, ymax), 
+                           interpolation='nearest', aspect='auto', 
+                           cmap=cm.PuRd, vmax=1)  
+
+
+        axs[2].scatter(quatdf.MidTime,quatdf.Earth_Camera_Azimuth, 
+                       label = "Earth", color='seagreen')
+        axs[2].scatter(quatdf.MidTime,quatdf.Moon_Camera_Azimuth, 
+                       label = "Moon",   color='darkturquoise')   
+        axs[2].legend(prop={'weight':'bold', 'size': 24},
+                      scatterpoints=3, markerscale=2)
+
+        ymin=min(min(quatdf.Earth_Camera_Azimuth), min(quatdf.Moon_Camera_Azimuth))
+        ymax=max(max(quatdf.Earth_Camera_Azimuth), max(quatdf.Moon_Camera_Azimuth))
+        im = axs[2].imshow(np.vstack((qual_im,)), 
+                           extent=(tmin, tmax, ymin, ymax), 
+                           interpolation='nearest', aspect='auto', 
+                           cmap=cm.PuRd, vmax=1)  
+
+        axs[0].set_ylabel("Distance", weight='bold', size=24)
+        axs[1].set_ylabel("Camera Angle", weight='bold', size=24)
+        axs[2].set_ylabel("Camera Azimuth", weight='bold', size=24)
+
+        axs[2].set_xlabel("TESS BTJD", weight='bold', size=24)
+        
+        axs[0].tick_params(axis='y', labelsize=18)
+        axs[1].tick_params(axis='y', labelsize=18)
+        axs[2].tick_params(axis='y', labelsize=18)
+
+        axs[2].tick_params(axis='x', labelsize=18)
+        plt.subplots_adjust(hspace=0)
+
+        cax = plt.axes([0.92, 0.11, 0.075, 0.77])
+        cbar = plt.colorbar(mappable = im, cax=cax, 
+                            ticks=[0,0.5,1])
+        cbar.ax.set_yticklabels(['Unflagged', 'Aggressive', 'Conservative'], 
+                                size=18)
+        cbar.set_label("Data Flagging Level (Lower Is Better)", 
+                       size=24, weight='bold')
+        
+        fout = f"{Binned_Dir}/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}_Ephem.png"
+        plt.savefig(fout, dpi=300,bbox_inches='tight')
+        #plt.show()
+        plt.close(fig)
+
+def Create_Diagnostics_Sector(Sector):
+    #CameraCadence
+    #Sector, Camera, Cadence = SectorCameraCadence
+    print(f"Creating Diagnostics for Sector: {Sector}")
+    for Camera in [1,2,3,4]:
+        for Cadence in [1,2,3]:
+            create_diagnostic_timeseries(Sector, Camera, Cadence)
+            #Should I create the periodograms from the "raw" 2s data?  probably?
+            create_diagnostic_periodogram(Sector, Camera, Cadence)
+            create_diagnostic_ephemerides(Sector, Camera, Cadence)
+
+def TESSVectors_process_sector(Sector):
+    bin_Sector(Sector)
+    try:
+        Create_Diagnostics_Sector(Sector)
+    except:
+        print("\t\t\t Warning, Plotting failed") # add a real warning
+        pass
+
+    return(Sector, True)
+
 def run_bulk_diagnostics():
     sector_list = range(1,65)
     camera_list = range(1,4)
@@ -483,5 +719,16 @@ def run_bulk_quats(processes=7):
     pool=Pool(processes=processes)
     res=[]
     for result in pool.map(bin_Sector, sector_list):
+        res=[res,result]
+    pool.close()
+
+def run_bulk_processing():
+    from multiprocessing.pool import Pool
+    import multiprocessing as mp
+    sector_list = range(1,65)
+
+    pool=Pool(processes=mp.cpu_count())
+    res=[]
+    for result in pool.map(TESSVectors_process_sector, sector_list):
         res=[res,result]
     pool.close()
