@@ -2,7 +2,7 @@ import astropy.io.fits as fits
 from astropy.stats import sigma_clipped_stats
 import matplotlib.pyplot as plt
 from matplotlib import cm
-import lightkurve as lk
+
 from lightkurve import TessQualityFlags
 import numpy as np
 import subprocess
@@ -14,6 +14,10 @@ import fitsio
 import pandas as pd
 import os
 
+import matplotlib as mpl
+mpl.rcParams['agg.path.chunksize'] = 10000000
+
+import lightkurve as lk
 
 import multiprocessing
 from itertools import product
@@ -404,7 +408,7 @@ def write_vector_sector_camera(BinnedQuats, BinnedEMI, TimeArr, Sector, Camera):
 
                 f.write(f"# Processing Date-Time: {date.today()}\n\n")
 
-            df = pd.DataFrame(data={'Cadence':Time[2], 'MidTime':Time[0], 'TimeCorr':Time[1],
+            df = pd.DataFrame(data={'Cadence':Time[2], 'MidTime':Time[0] + Time[1], 'TimeCorr':Time[1],
                                     'Quality':Time[3], 'ExpTime':[typedict[i]] * len(Time[0]), 
                                     'Sector': [Sector] * len(Time[0]), 'Camera': Camera  * len(Time[0]),
                                     'Quat_Start':Quat[0], 'Quat_Stop':Quat[1], 
@@ -490,8 +494,6 @@ def plot_quat(axs, time, quat, dev, qual,QuatLabel):
         return im
 
 def create_diagnostic_timeseries(Sector, Camera, Cadence):
-    import matplotlib as mpl
-    mpl.rcParams['agg.path.chunksize'] = 10000000000
 
     typedict = {1:'020', 2:'120', 3:'FFI'}
     if(type(Cadence) != str):
@@ -526,8 +528,8 @@ def create_diagnostic_timeseries(Sector, Camera, Cadence):
         
         #plt.tight_layout()
         fout = f"{Binned_Dir}/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}_Quat.png"
-        plt.savefig(fout, dpi=300,bbox_inches='tight')
-        #plt.show()
+        plt.show()
+        plt.savefig(fout, dpi=300,bbox_inches='tight', rasterize=True)
         plt.close(fig)
 
 def plot_lsperiodogram(ax, time, median, std, QuatLabel):
@@ -546,8 +548,6 @@ def plot_lsperiodogram(ax, time, median, std, QuatLabel):
     return
 
 def create_diagnostic_periodogram(Sector, Camera, Cadence):
-    import matplotlib as mpl
-    mpl.rcParams['agg.path.chunksize'] = 10000000
     
     typedict = typedict = {1:'020', 2:'120', 3:'FFI'}
     if(type(Cadence) != str):
@@ -581,7 +581,7 @@ def create_diagnostic_periodogram(Sector, Camera, Cadence):
         plt.savefig(fout, dpi=300,bbox_inches='tight')
         plt.close(fig)
 
-def create_diagnostic_ephemerides(Sector, Camera, Cadence):
+def create_diagnostic_emi(Sector, Camera, Cadence):
     import matplotlib as mpl
     mpl.rcParams['agg.path.chunksize'] = 10000000
 
@@ -648,8 +648,8 @@ def create_diagnostic_ephemerides(Sector, Camera, Cadence):
                            cmap=cm.PuRd, vmax=1)  
 
         axs[0].set_ylabel("Distance", weight='bold', size=24)
-        axs[1].set_ylabel("Camera Angle", weight='bold', size=24)
-        axs[2].set_ylabel("Camera Azimuth", weight='bold', size=24)
+        axs[1].set_ylabel("Camera {Camera} Angle", weight='bold', size=24)
+        axs[2].set_ylabel("Camera {Camera} Azimuth", weight='bold', size=24)
 
         axs[2].set_xlabel("TESS BTJD", weight='bold', size=24)
         
@@ -668,7 +668,7 @@ def create_diagnostic_ephemerides(Sector, Camera, Cadence):
         cbar.set_label("Data Flagging Level (Lower Is Better)", 
                        size=24, weight='bold')
         
-        fout = f"{Binned_Dir}/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}_Ephem.png"
+        fout = f"{Binned_Dir}/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}_emi.png"
         plt.savefig(fout, dpi=300,bbox_inches='tight')
         #plt.show()
         plt.close(fig)
