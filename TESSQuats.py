@@ -23,6 +23,10 @@ import multiprocessing
 from itertools import product
 
 def get_ccd_centers(Sector, Camera, CCD):
+    ''' Given a sector/camera/ccd - return the center ra, dec for that TESS pointing
+        Uses a subprocess TESSPoint reverse search - could change this to an import?
+    '''
+
     point=subprocess.run(["python","/Users/tapritc2/tessgi/tesspoint/tess-point/tess_stars2px.py",
                           "-r",str(Sector),str(Camera),str(CCD),
                           str(1024),str(1024)],capture_output=True,text=True)
@@ -31,18 +35,29 @@ def get_ccd_centers(Sector, Camera, CCD):
     return ra, dec
 
 #Get a timing array
-def get_timing_midpoints_tpf(ra_c, dec_c, Sector, exptime):
+def get_timing_midpoints_tpf(ra_c, dec_c, Sector, exptime, tpf_orbit_labels = None, tpf_times = None):
+    ''' Given A RA, DEC position, Sector, and observing cadence - 
+        return an array with the ob served times extracted from a TPF
+
+        This has grown - now also returns FFI filenames and orbit breaks as these 
+        also use information derived from the tpfs
+    '''
+
     timing_benchmark=[]
     for ra, dec in zip(ra_c, dec_c):
+        # This queries external data and occasionally times out
+        # Built in some redundancy
         max_attempts=5
         while max_attempts:
             try: 
                 if(exptime != 'ffi'):
+                    #Use TESSCut for an FFI 
                     results=lk.search_targetpixelfile(f"{ra} {dec}",radius=1e4,
                                                       sector=Sector,mission='TESS', 
                                                       exptime=exptime,limit=1, 
                                                       author='SPOC').download(quality_bitmask='none')
                 else:
+
                     results=lk.search_tesscut(f"{ra} {dec}",
                                                       sector=Sector).download(cutout_size=(1,1),
                                                                               quality_bitmask='none')
@@ -57,9 +72,19 @@ def get_timing_midpoints_tpf(ra_c, dec_c, Sector, exptime):
         hdu=fits.open(results.path)
         timing_corr = hdu[1].data["TIMECORR"][nonzero_mask]
         timing_ccd=results.time.value[nonzero_mask] - timing_corr
+        ffi_list = []
+        if(exptime == 'ffi'):
+            ffi_list=hdu[1].data["FFI_FILE"][nonzero_mask]
         hdu.close
-        
-        
+
+        # get the orbit breaks from the TPF Quality Flags
+        # this just got very messy since TESSCut TPFs now need the SPOC TPF's for orbit labeling
+        if(exptime == 'ffi' and isinstance(tpf_orbit_labels, np.ndarray)):
+            orbit_list = label_orbit_cadence_ffi(results.quality, results.time.value,
+                                                 tpf_orbit_labels, tpf_times)
+        else:
+            orbit_list = label_orbit_cadence(results.quality, results.time.value)
+
         if(len(timing_benchmark) == 0):
             timing_benchmark = timing_ccd
             cadences = results.cadenceno[nonzero_mask]#.value
@@ -79,15 +104,21 @@ def get_timing_midpoints_tpf(ra_c, dec_c, Sector, exptime):
     TimingArr[1] = timing_corr
     TimingArr[2] = cadences
     TimingArr[3] = quality
-    return TimingArr
+    return TimingArr, orbit_list, ffi_list
         
 def get_camera_sector_cadences(Sector,Camera):
+    ''' For a given Sector, Camera Get the TimingMidpoint Arrays and OrbitLabels
+        For each Cadence in addition to the FFI File List
+
+        Returns midpoints, orbitslabels, and ffilist arrays
+    '''
     cutoff_20s=27 # No 20s data before cycle_whatever
     CCD_List=[1]#(1,2,3,4)
     #write now we're checking that each CCD has the same timearr for each product
     #once we're done with that - we can can use only CCD 1 or whatever
     #IN PROGRESS
-    
+    ''' there looks like their can be a small offset on the timing array between CCD's - 
+        exposure time? ~1s, using Camera 1 timing as reference [TO DOCUMENT/CONFIRM]'''
     ra_c=[]
     dec_c=[]
     #Get CCD Centers:
@@ -97,36 +128,48 @@ def get_camera_sector_cadences(Sector,Camera):
         dec_c.append(dec)
     
     midpoint_20s = None
+    orbit_20s = None
+
     if(Sector >= cutoff_20s):
         #Get high-cadence 20s timing
         print(f"\t\tGetting 20s Cadence Midpoints")
-        midpoint_20s = get_timing_midpoints_tpf(ra_c, dec_c, Sector, 'fast')
+        midpoint_20s, orbit_20s, _ = get_timing_midpoints_tpf(ra_c, dec_c, Sector, 'fast')
     #Get 120s TPF Timing
-    midpoint_120s = get_timing_midpoints_tpf(ra_c, dec_c, Sector, 'short')
+    midpoint_120s, orbit_120s, _ = get_timing_midpoints_tpf(ra_c, dec_c, Sector, 'short')
     print(f"\t\tGetting 120s Cadence Midpoints")
     #Get FFI Timing
-    midpoint_ffi = get_timing_midpoints_tpf(ra_c, dec_c, Sector, 'ffi')
-    print(f"\t\tGetting FFI Cadence Midpoints")
+    midpoint_ffi, orbit_ffi, ffi_list = get_timing_midpoints_tpf(ra_c, dec_c, Sector, 'ffi', 
+                                                                 tpf_orbit_labels = orbit_120s, 
+                                                                 tpf_times = midpoint_120s[0])
 
-    return midpoint_20s, midpoint_120s, midpoint_ffi
+    print(f"\t\tGetting FFI Cadence Midpoints")
+    midpoints = [midpoint_20s, midpoint_120s, midpoint_ffi]
+    orbits = [orbit_20s, orbit_120s, orbit_ffi]
+    return midpoints, orbits, ffi_list
 
 def listFD(url, ext=''):
+    ''' gets a list of files from a given URL using the BS4 parcer
+    '''
     page = requests.get(url).text
     soup = BeautifulSoup(page, 'html.parser')
     return [url + '/' + node.get('href') for node in soup.find_all('a') if node.get('href').endswith(ext)]
 
 def get_quat_data(Sector):
+    ''' For a given sector, fetch the quat data object using a remote fits read
+    '''
     base_url="https://archive.stsci.edu/missions/tess/engineering"
     filelist = [file for file in listFD(base_url,f"sector{Sector:02d}-quat.fits")]
     # Right now there is only 1 processing time per sector, this could change
     # For now assume this is a singular value
-    # Later should potentially code some logic to use the laargest number/latest processing
+    # TODO Later should potentially code some logic to use the largest number/latest processing
     #QuatData=fitsio.FITS(filelist[0])
     print(f"\tGetting Quaternion Data for Sector: {Sector}")
     QuatData=fits.open(filelist[0])
     return QuatData
 
 def get_emi_data(Sector):
+    ''' For a given sector, fetch the emi data object using a remote fits read
+    '''
     base_url="https://archive.stsci.edu/missions/tess/engineering"
     filelist = [file for file in listFD(base_url,f"sector{Sector:02d}-emi.fits")]
     # Right now there is only 1 processing time per sector, this could change
@@ -134,20 +177,18 @@ def get_emi_data(Sector):
     EMIData=fits.open(filelist[0])
     return EMIData
 
-def crm_bin(quats):
-    #we could re-write this to be O(N) if we just step through the array checking highest/lowest values
-    if (len(quats) > 2):
-        return np.median(np.sort(quats)[1:len(quats)-1])
-    else:
-        return
-
 def Bin_Quat_Cadence(cadence, CameraData, Camera):
+    ''' Bin engineering quaternions to observed cadences
+        cadence - observed cadences / array of observation midpoints
+        CameraData - Quaternion Data For Camera from the quat engineering file
+        Camera - Camera Number
+    '''
     ExpTime = np.double(abs(cadence[1]-cadence[0])) # Should this be hard-coded instead? prbly med
     #print(ExpTime)
     SubArr_Len = int(2 * (ExpTime * (60. * 60. * 24.) / 2.))
     Time_Len = len(cadence)
     Source_Len = len(CameraData['Time'])
-    BinnedQuats=np.zeros((21, Time_Len), dtype=np.double) #( 8 Quat Vectors * 3 + 2 (Tmin/max) + #GS + MSTot + FoM)
+    BinnedQuats=np.zeros((17, Time_Len), dtype=np.double) #( 8 Quat Vectors * 3 + 2 (Tmin/max) + #GS + MSTot + FoM)
     submask_length = 2 * ExpTime
     min_ind = int(0)
     max_ind = SubArr_Len # Days -> Seconds / 2 S per Quat Exp
@@ -173,6 +214,8 @@ def Bin_Quat_Cadence(cadence, CameraData, Camera):
         
         if(len(mask[0]) == 0):
             Flag_ZeroMask = Flag_ZeroMask + 1
+        ''' saving the below comments for a logging conversion 
+            yeah yeah tyler do logging '''
             #print(f"\t\t\t\tWarning: 0 Quaternions found in the time bin!")
             #print(f"Min: {CameraData['Time'][min_ind]}")
             #print(f"Max: {CameraData['Time'][max_ind]}")
@@ -199,22 +242,18 @@ def Bin_Quat_Cadence(cadence, CameraData, Camera):
             BinnedQuats[5][i] =   np.median(SubArr[f"C{Camera:d}_Q1"][mask])
             BinnedQuats[6][i] =   np.std(SubArr[f"C{Camera:d}_Q1"][mask])
             BinnedQuats[7][i] =   sigma_clipped_stats(SubArr[f"C{Camera:d}_Q1"][mask])[2]
-            BinnedQuats[8][i] =   crm_bin(SubArr[f"C{Camera:d}_Q1"][mask])
 
-            BinnedQuats[9][i] =   np.median(SubArr[f"C{Camera:d}_Q2"][mask])
-            BinnedQuats[10][i] =  np.std(SubArr[f"C{Camera:d}_Q2"][mask])
-            BinnedQuats[11][i] =  sigma_clipped_stats(SubArr[f"C{Camera:d}_Q2"][mask])[2]
-            BinnedQuats[12][i] =  crm_bin(SubArr[f"C{Camera:d}_Q2"][mask])
+            BinnedQuats[8][i] =   np.median(SubArr[f"C{Camera:d}_Q2"][mask])
+            BinnedQuats[9][i] =  np.std(SubArr[f"C{Camera:d}_Q2"][mask])
+            BinnedQuats[10][i] =  sigma_clipped_stats(SubArr[f"C{Camera:d}_Q2"][mask])[2]
             
-            BinnedQuats[13][i] =  np.median(SubArr[f"C{Camera:d}_Q3"][mask])
-            BinnedQuats[14][i] =  np.std(SubArr[f"C{Camera:d}_Q3"][mask])
-            BinnedQuats[15][i] =  sigma_clipped_stats(SubArr[f"C{Camera:d}_Q3"][mask])[2]
-            BinnedQuats[16][i] =  crm_bin(SubArr[f"C{Camera:d}_Q3"][mask])
+            BinnedQuats[11][i] =  np.median(SubArr[f"C{Camera:d}_Q3"][mask])
+            BinnedQuats[12][i] =  np.std(SubArr[f"C{Camera:d}_Q3"][mask])
+            BinnedQuats[13][i] =  sigma_clipped_stats(SubArr[f"C{Camera:d}_Q3"][mask])[2]
             
-            BinnedQuats[17][i] =  np.median(SubArr[f"C{Camera:d}_Q4"][mask])
-            BinnedQuats[18][i] =  np.std(SubArr[f"C{Camera:d}_Q4"][mask])
-            BinnedQuats[19][i] =  sigma_clipped_stats(SubArr[f"C{Camera:d}_Q4"][mask])[2]
-            BinnedQuats[20][i] =  crm_bin(SubArr[f"C{Camera:d}_Q4"][mask])
+            BinnedQuats[14][i] =  np.median(SubArr[f"C{Camera:d}_Q4"][mask])
+            BinnedQuats[15][i] =  np.std(SubArr[f"C{Camera:d}_Q4"][mask])
+            BinnedQuats[16][i] =  sigma_clipped_stats(SubArr[f"C{Camera:d}_Q4"][mask])[2]
            
             min_ind = min_ind + int(np.max(mask[0]) + 1)
 
@@ -224,7 +263,7 @@ def Bin_Quat_Cadence(cadence, CameraData, Camera):
                 #Sector 43 - Camera 2 not being used, only 4
                 #Running into issues where there are no quaternions
                 #Substitute Nan's?
-                #Include data quality flags, check to see if this is in known bad data and
+                # TODO Include data quality flags, check to see if this is in known bad data and
                 #throw a harder error?
         # Add Cadence #
         # Quality Masks
@@ -238,6 +277,8 @@ def Bin_Quat_Cadence(cadence, CameraData, Camera):
     return BinnedQuats
 
 def EMI_Extension_Dict(ext_string):
+     ''' Dictionary of fits emi file table column names
+     '''
     # This could be done algorithmically, but thought it was less error prone this way
     # I broke this out of the function b/c it was big & ugly
      emi_dict={
@@ -267,6 +308,12 @@ def EMI_Extension_Dict(ext_string):
      return emi_dict[ext_string]
 
 def Bin_EMI_Cadence(cadence, EMIData, Camera,type):
+    ''' Bin the EMI information to the observed cadences
+        cadence - observed time midpoint array / end-product observation cadences
+        EMIData - EMI data file from the emi engineering file
+        Camera - camera number
+        type - observing cadence for cadence  
+    '''
     typedict = {1:'020', 2:'120', 3:'FFI'}
     ExpTime = np.double(abs(cadence[1]-cadence[0])) # Should this be hard-coded instead? prbly med
     if (isinstance(type, int)):
@@ -327,7 +374,11 @@ def Bin_EMI_Cadence(cadence, EMIData, Camera,type):
     return BinnedEMI
 
 def Bin_Quat_Camera(CameraData,TimeArr, Camera):
-
+    ''' Bin quaternions for all cadences for a given camera
+        CameraData - quaternion data from the quat engineering file
+        TimeArr - observed cadence midpoints from tpfs
+        Camera - Camera Number
+    '''
     Bin20 = None   
     if(TimeArr[0] is not None):
         print("\t\tBinning 20s Quaternion Data")
@@ -340,6 +391,11 @@ def Bin_Quat_Camera(CameraData,TimeArr, Camera):
     return Bin20, Bin120, BinFFI
 
 def Bin_EMI_Camera(EMIData,TimeArr, Camera):
+    ''' Bin emi info for all cadences for a given camera
+        EMIData - EMI data from the emi engineering file
+        TimeArr - observed cadence midpoints from tpfs
+        Camera - Camera Number
+    '''
     EMI20 = None   
     if(TimeArr[0] is not None):
         print("\t\tBinning 20s EMI Data")
@@ -351,11 +407,71 @@ def Bin_EMI_Camera(EMIData,TimeArr, Camera):
         
     return EMI20, EMI120, EMIFFI
 
-def write_vector_sector_camera(BinnedQuats, BinnedEMI, TimeArr, Sector, Camera):
+def label_orbit_cadence(quality, times):
+    ''' Create labels for orbits - using the quality flag and timing array
+
+        right now, an 'orbit' is every stretch of observations between earth point
+        quality flags (=8), with each earth point stretch causing an increment in 
+        orbit label
+    '''
+    # TODO ok, if I have to worry about multiple quality values should do tghe bitwise properly
+    NotObserving = (quality == 8) | (quality == 2) | (quality == 9) | (quality == 1)
+
+    orbit_labels=np.empty_like(times[times != 0])
+    #this is really stupid, do something better for segmentation
+    # I think this breaks from safeholds, need to find one and check,
+    # figure out a better way of indexing across everything at the 
+    # same time
+    # #TODO This will break if there is ever a tpf exposure with time=0 
+    # that is not an earth_point (safehold),
+    #  there are a number of 'indexing errors probably related to this?
+    # safemode = 2, whatelse? 
+    # safemode doesnt fi this, track down
+    # attitude tweak = 1 also has time=0
+    # manual discontinuity = 9 also has time=0
+    # 8200?  I dont think thats a real bitwise value
+
+    # THIS WORKS FOR SPOC TPFS NOT TESSCUT
+    # TESSCUT is from the FFIs so has no t=0 blank cadences
+    # will need to build in interpolation for FFI's #TODO
+    label = 1
+    orbit_ind = 0
+    for i in range(len(NotObserving)):
+        if(NotObserving[i]):
+            if((i != 0) and (not NotObserving[i-1])):
+                label += 1
+        else:
+            if(orbit_ind < len(orbit_labels)):
+                orbit_labels[orbit_ind] = label
+            orbit_ind += 1
+
+    if(orbit_ind != len(orbit_labels)):
+        print("\t\t\t Warning: Something went wrong with the orbit labels indexing")
+        print(f"\t\t\t orbit_ind={orbit_ind} Length of orbit_labels={len(orbit_labels)}")
+        # yeah yeah tyler do logging
+    return orbit_labels
+
+def label_orbit_cadence_ffi(quality, times, tpf_orbit_labels, tpf_times):
+    #We're not using quality currently, but I think we might need it, delete when tested
+    orbit_labels=np.empty_like(times[times != 0])
+    # use labels from a spoc tpf to label the FFI's
+    orbits = np.unique(tpf_orbit_labels)
+    for orbit in orbits:
+        min_orbit_time = min(tpf_times[tpf_orbit_labels == orbit])
+        max_orbit_time = max(tpf_times[tpf_orbit_labels == orbit])
+        orbit_times = (times > min_orbit_time) & (times < max_orbit_time)
+        orbit_labels[orbit_times] = orbit
+        # TODO - indexing shennangians - what to do when there are (inevitably) FFI times that are 
+        # not caputred by these boundaries?  Probably find the nearest orbit label and copy label?
+        # check for empty orbit labels & assign values  
+    return orbit_labels
+
+def write_vector_sector_camera(BinnedQuats, BinnedEMI, OrbitLabel, FFIList, TimeArr, Sector, Camera):
+    '''  Write TESSVectors Info to CSV files for all observed cadences
+    '''
     typedict = {1:'020', 2:'120', 3:'FFI'}
     Binned_Dir='TESSVectors_products'
-
-    for Quat, EMI, Time, i in zip(BinnedQuats, BinnedEMI, TimeArr, [1,2,3]):
+    for Quat, EMI, Time, Orbit, i in zip(BinnedQuats, BinnedEMI, TimeArr, OrbitLabel, [1,2,3]):
         from datetime import date
 
         fname = f"{Binned_Dir}/{typedict[i]}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{typedict[i]}.csv"
@@ -381,15 +497,8 @@ def write_vector_sector_camera(BinnedQuats, BinnedEMI, TimeArr, Sector, Camera):
                 f.write(f"# for some sectors/cameras alternative camera quaternions are substituted for a variety of programattic reasons.\n\n")
                 f.write(f"# Column Descriptions:\n")
                 f.write(f"# Cadence #: Cadence index from the source tpf\n")
-                # NOTE TO SELF WE SHOULD PROBABLY RE-CONVERT THE TIMES TO BE LIKE LK TIMES FOR THE END USER
-                f.write(f"# MidTime: The exposure midpoint in spacecraft time (i.e. tpf.time - tpf.timecorr)\n")
+                f.write(f"# MidTime: The exposure midpoint in spacecraft corrected time (i.e. tpf.time)\n")
                 f.write(f"# TimeCorr: The Time Correction for spacecraft to Barycentric time at that cadence\n")
-                f.write(f"# Quality: Quality bitmask at that cadence from the tpf - see the TESS Instrument handbook for more info\n")
-                # We could remove ExpTime/Sector/Camera and just keep them in the metadata, but I could see them being
-                # useful like this
-                f.write(f"# ExpTime: The final cadence binning (20s/120s/FFI)\n")
-                f.write(f"# Sector: The TESS observing Sector for the source data\n")
-                f.write(f"# Camera: The TESS camera for the source data\n")
                 f.write(f"# Quat_Start: The timestamp of the earliest quaternion used in the bin\n")
                 f.write(f"# Quat_Stop: The timestamp of the last quaternion used in the bin\n")
                 f.write(f"# Quat_MIN_FOM: The worst Figure of Merit from the source quaternions\n")
@@ -405,40 +514,47 @@ def write_vector_sector_camera(BinnedQuats, BinnedEMI, TimeArr, Sector, Camera):
                 f.write(f"# Moon_Distance: Distance to Moon in Re \n\n")            
                 f.write(f"# Moon_Camera_Angle: Angle of Moon from Camera Boresight in Degrees \n\n")            
                 f.write(f"# Moon_Camera_Azimuth: Azimuth of Moon around Camera Boresight in Degrees \n\n")            
-
+                if(i == 3):
+                    f.write(f"# FFIFile: The FFI file assosciated with this observing cadence\n")
                 f.write(f"# Processing Date-Time: {date.today()}\n\n")
-
-            df = pd.DataFrame(data={'Cadence':Time[2], 'MidTime':Time[0] + Time[1], 'TimeCorr':Time[1],
-                                    'Quality':Time[3], 'ExpTime':[typedict[i]] * len(Time[0]), 
-                                    'Sector': [Sector] * len(Time[0]), 'Camera': Camera  * len(Time[0]),
+            df = pd.DataFrame(data={'Cadence':Time[2], 'MidTime':Time[0] + Time[1], 
+                                    'TimeCorr':Time[1], 'Orbit':Orbit,
                                     'Quat_Start':Quat[0], 'Quat_Stop':Quat[1], 
                                     'Quat_MIN_FOM':Quat[2],'Quat_MIN_NUM_GSUSED':Quat[3],'Quat_NBinned': Quat[4], 
-                                    'Quat1_Med': Quat[5], 'Quat1_StdDev': Quat[6], 'Quat1_StdDev_SigClip':Quat[7],'Quat1_CRM_Med': Quat[8], 
-                                    'Quat2_Med': Quat[9], 'Quat2_StdDev': Quat[10],'Quat2_StdDev_SigClip':Quat[11],'Quat2_CRM_Med': Quat[12], 
-                                    'Quat3_Med': Quat[13],'Quat3_StdDev': Quat[14],'Quat3_StdDev_SigClip':Quat[15],'Quat3_CRM_Med': Quat[16], 
-                                    'Quat4_Med': Quat[17],'Quat4_StdDev': Quat[18],'Quat4_StdDev_SigClip':Quat[19],'Quat4_CRM_Med': Quat[20],
+                                    'Quat1_Med': Quat[5], 'Quat1_StdDev': Quat[6], 'Quat1_StdDev_SigClip':Quat[7],
+                                    'Quat2_Med': Quat[8], 'Quat2_StdDev': Quat[9],'Quat2_StdDev_SigClip':Quat[10],
+                                    'Quat3_Med': Quat[11],'Quat3_StdDev': Quat[12],'Quat3_StdDev_SigClip':Quat[13],
+                                    'Quat4_Med': Quat[14],'Quat4_StdDev': Quat[15],'Quat4_StdDev_SigClip':Quat[16],
                                     'Earth_Distance': EMI[0], 'Earth_Camera_Angle': EMI[1], 'Earth_Camera_Azimuth': EMI[2],
                                     'Moon_Distance': EMI[3], 'Moon_Camera_Angle': EMI[4], 'Moon_Camera_Azimuth': EMI[5] 
                                     }
-                             )
-            df.astype({'Cadence':int, 
-                       'Quality':int, 
-                       'Sector': int, 
-                       'Camera':int}
-                       #'Quat_MIN_NUM_GSUSED':int,
-                       #'Quat_NBinned': int}
-                    ).to_csv(fname, index=False, mode = "a")
+                                )
+            if(i == 3):
+                df["FFIFile"] = FFIList
+
+            #df.astype({'Cadence':int, 
+            #           'Sector': int, 
+            #           'Camera':int}
+            #           #'Quat_MIN_NUM_GSUSED':int,
+            #           #'Quat_NBinned': int}
+            #        ).to_csv(fname, index=False, mode = "a")
+            df.to_csv(fname, index=False, mode = "a")
     
 def bin_Sector(Sector):
+    ''' For a given sector, create TESSVectors Information and write to a CSV file
+
+    '''
+    # The Quat and EMI files have all cameras in one file
+    #   - read in once, then pass across Cameras
     print(f"Starting Sector: {Sector}")
     QuatData = get_quat_data(Sector)
     EMIData = get_emi_data(Sector)
     for Camera in [1,2,3,4]:
         print(f"\tStarting Camera: {Camera}")
-        TimeArr = get_camera_sector_cadences(Sector, Camera)
+        TimeArr, OrbitLabels, FFIList = get_camera_sector_cadences(Sector, Camera)
         BinnedQuats = Bin_Quat_Camera(QuatData[Camera].data, TimeArr, Camera)
         BinnedEMI = Bin_EMI_Camera(EMIData, TimeArr, Camera)
-        write_vector_sector_camera(BinnedQuats, BinnedEMI, TimeArr, Sector, Camera)
+        write_vector_sector_camera(BinnedQuats, BinnedEMI, OrbitLabels, FFIList, TimeArr, Sector, Camera)
 
 def quality_to_color(qual):
     
@@ -459,8 +575,8 @@ def plot_quat(axs, time, quat, dev, qual,QuatLabel):
         nsigma = 1
         
         #norm = np.nanmedian(np.double(quat[~np.isfinite(quat)]))
-        norm=np.nanmedian(quat)
         norm_quat = quat / norm
+        norm=np.nanmedian(quat)
         norm_dev = dev / norm
         #mean_norm_dev = np.nanmedian(dev[~np.isfinite(dev)] / norm)
         mean_norm_dev = np.nanmedian(dev / norm)
@@ -494,7 +610,7 @@ def plot_quat(axs, time, quat, dev, qual,QuatLabel):
         return im
 
 def create_diagnostic_timeseries(Sector, Camera, Cadence):
-
+    #TODO add orbit labels to plot?
     typedict = {1:'020', 2:'120', 3:'FFI'}
     if(type(Cadence) != str):
         cadence_name = typedict[Cadence]
