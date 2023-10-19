@@ -12,20 +12,25 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 import os
-
+import sys
 import matplotlib as mpl
 
 mpl.rcParams["agg.path.chunksize"] = 10000000
 
 import lightkurve as lk
 
-import multiprocessing
-from itertools import product
-
+logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 log = logging.getLogger("TESSQuats")
 log.setLevel(logging.INFO)
 
-# Lint with black and push
+TESSVectors_Products_Base = 'Products'
+
+TESSVectos_local=False
+TESSVectors_Local_ENG_Path = 'Eng'
+TESSVectors_Local_tpf_fast_path = 'SourceData/fast'
+TESSVectors_Local_tpf_short_path = 'SourceData/short/'
+TESSVectors_Local_tpf_ffi_path = 'SourceData/FFI/'
+
 def get_ccd_centers(Sector, Camera, CCD):
     """Given a sector/camera/ccd - return the center ra, dec for that TESS pointing
     Uses a subprocess TESSPoint reverse search - could change this to an import?
@@ -79,7 +84,45 @@ def get_times_from_mast(ra, dec, Sector, exptime):
     return results
 
 def get_times_local(Sector, Camera, exptime):
-    raise NotImplementedError
+    if(exptime != 'ffi'):
+        regex = f"*s{Sector:04d}*ffic.fits "
+        ffi_list = glob.glob(f"{TESSVectors_Local_tpf_ffi_path}{regex}")
+        timing_benchmark = []
+        timing_corr = []
+        cadences = []
+        quality = []
+        
+        for ffi in ffi_list:
+            with fits.open(ffi) as hdu:
+                timing_benchmark.append(0.5 * abs(hdu[0].header['TIMESTOP'] -'TIMESTART'))
+                timing_corr.append(hdu[1].header['BARYCORR'])
+                cadences.append(hdu[0].header['FFIINDEX'])
+                quality.append(hdu[1].header['DQUALITY'])
+        results = [timing_benchmark, 
+                   timing_corr,
+                   cadences,
+                   quality]
+    else:
+        if exptime == 'short':
+            regex = f"*s{Sector:04d}*s_tp.fits"
+            path = TESSVectors_Local_tpf_short_path
+        if exptime == 'fast':
+            regex = f"*s{Sector:04d}*fast-tp.fits"
+            path = TESSVectors_Local_tpf_fast_path
+        
+        tpf_list = glob.glob(f"{path}{regex}")
+
+        cam = 0
+        i=0
+        while (cam != Camera) and i < len(tpf_list):
+            tpf = lk.read(tpf_list[i])
+            tpf.meta['CAMERA']
+            i+=1
+        if i == len(tpf_list):
+            raise RuntimeWarning(f"No tpf for Sector {Sector} Camera {Camera} {exptime} found")
+        else:
+            results = tpf
+
     return results
 
 def get_timing_midpoints_tpf(
@@ -92,47 +135,55 @@ def get_timing_midpoints_tpf(
     """
 
     timing_benchmark = []
-    for ra, dec in zip(ra_c, dec_c):
-        if not local:
-            results = get_times_from_mast(
-                ra, dec, Sector, exptime
-            )
-        else:
-            results = get_times_local(Sector, Camera, exptime)
-    
-        # Get timecorr, correct for it
-        # lightkurve PR?
-        nonzero_mask = np.nonzero(results.time.value)  
+    if(exptime != 'ffi' and not (TESSVectos_local or local)):
+        # If we are NOT doing FFI Local Processing
+        for ra, dec in zip(ra_c, dec_c):
+            if (not TESSVectos_local) or (not local):
+                results = get_times_from_mast(
+                    ra, dec, Sector, exptime
+                )
+            else:
+                results = get_times_local(Sector, Camera, exptime)
 
-        with fits.open(results.path) as hdu:
-            timing_corr = hdu[1].data["TIMECORR"][nonzero_mask]
-            timing_ccd = results.time.value[nonzero_mask] - timing_corr
-            ffi_list = []
-            if exptime == "ffi":
-                ffi_list = hdu[1].data["FFI_FILE"][nonzero_mask]
+            # Get timecorr, correct for it
+            # lightkurve PR?
+            nonzero_mask = np.nonzero(results.time.value)  
 
-        # Calculate break times from 120s data and asign labeling from them
-        # if ffi or 020 
-        if (break_times is None):
-            break_times = get_break_times(results.time.value)
+            with fits.open(results.path) as hdu:
+                timing_corr = hdu[1].data["TIMECORR"][nonzero_mask]
+                timing_ccd = results.time.value[nonzero_mask] - timing_corr
+                ffi_list = []
+                if exptime == "ffi":
+                    ffi_list = hdu[1].data["FFI_FILE"][nonzero_mask]
+
+
+            if len(timing_benchmark) == 0:
+                timing_benchmark = timing_ccd
+                cadences = results.cadenceno[nonzero_mask]  # .value
+                quality = results.quality[nonzero_mask]
+            else:
+                if not np.allclose(timing_benchmark, timing_ccd, rtol=1e-6):
+                    warnings.warn(f"Timing Cadence Mismatch in {exptime} TPF Data")
+                    log.warning(f"Length of Benchmark: {len(timing_benchmark)}")
+                    log.warning(f"Length of Comparison CCD: {len(timing_ccd)}")
+                    if len(timing_benchmark) == len(timing_ccd):
+                        log.warning(
+                            f"Maximum Difference between the arrays: {max(abs(timing_benchmark-timing_ccd))}"
+                        )
+                    # maybe set timing_benchmark = union of two timing sets here
+                    # swap above prints to logging-debug
+    else:
+        # If we are doing ffi local processing
+        timing_benchmark, timing_corr, cadences, quality = get_times_local(Sector, Camera, exptime)
+
+    # Calculate break times from 120s data and asign labeling from them
+    # if ffi or 020 
+    if (break_times is None):
+        break_times = get_break_times(timing_benchmark.value)
         
-        segment_list = get_segment_label(results.time.value, break_times)
+    segment_list = get_segment_label(timing_benchmark.value, break_times)
 
-        if len(timing_benchmark) == 0:
-            timing_benchmark = timing_ccd
-            cadences = results.cadenceno[nonzero_mask]  # .value
-            quality = results.quality[nonzero_mask]
-        else:
-            if not np.allclose(timing_benchmark, timing_ccd, rtol=1e-6):
-                warnings.warn(f"Timing Cadence Mismatch in {exptime} TPF Data")
-                log.warning(f"Length of Benchmark: {len(timing_benchmark)}")
-                log.warning(f"Length of Comparison CCD: {len(timing_ccd)}")
-                if len(timing_benchmark) == len(timing_ccd):
-                    log.warning(
-                        f"Maximum Difference between the arrays: {max(abs(timing_benchmark-timing_ccd))}"
-                    )
-                # maybe set timing_benchmark = union of two timing sets here
-                # swap above prints to logging-debug
+
     # Add in supplementrary Information
     TimingArr = np.zeros((5, len(timing_benchmark)), dtype=np.double)
     TimingArr[0] = timing_benchmark
@@ -168,7 +219,7 @@ def get_camera_sector_cadences(Sector, Camera):
     midpoint_20s = None
     
     # Get 120s TPF Timing
-    log.info(f"\t\tGetting 120s Cadence Midpoints")
+    log.info(f"\t\tGetting 120s Cadence Midpoints Sector: {Sector} Camera: {Camera}")
     midpoint_120s, break_times, _ = get_timing_midpoints_tpf(
         ra_c, dec_c, Sector, Camera, "short"
     )
@@ -176,14 +227,14 @@ def get_camera_sector_cadences(Sector, Camera):
     # update variable name, midpoint is now a list of objects including the midpoints
     if Sector >= cutoff_20s:
         # Get high-cadence 20s timing
-        log.info(f"\t\tGetting 20s Cadence Midpoints")
+        log.info(f"\t\tGetting 20s Cadence Midpoints Sector: {Sector} Camera: {Camera}")
         midpoint_20s, _, _ = get_timing_midpoints_tpf(
             ra_c, dec_c, Sector, Camera, "fast",
             break_times=break_times,
         )
 
     # Get FFI Timing
-    log.info(f"\t\tGetting FFI Cadence Midpoints")
+    log.info(f"\t\tGetting FFI Cadence Midpoints Sector: {Sector} Camera: {Camera}")
     midpoint_ffi, _, ffi_list = get_timing_midpoints_tpf(
         ra_c,
         dec_c,
@@ -207,6 +258,10 @@ def listFD(url, ext=""):
         if node.get("href").endswith(ext)
     ]
 
+def get_eng_data_local(Sector, eng):
+    EngData = glob.glob(f"{TESSVectors_Local_ENG_Path}/*sector{Sector:02d}-{eng}.fits")
+    return EngData[0]
+
 def get_eng_data(Sector, eng, local=False):
     log.info(f"\tGetting Engineering Data Type: {eng} for Sector: {Sector}")
     if(not local):
@@ -215,7 +270,7 @@ def get_eng_data(Sector, eng, local=False):
          # TODO Later should potentially code some logic to use the largest number/latest processing
          EngData = fits.open(filelist[0])
     else:
-        raise NotImplementedError
+        EngData = get_eng_data_local(Sector, eng)
     return EngData
 
 
@@ -514,13 +569,13 @@ def write_vector_sector_camera(
 ):
     """Write TESSVectors Info to CSV files for all observed cadences"""
     typedict = {1: "020", 2: "120", 3: "FFI"}
-    Binned_Dir = "TESSVectors_products"
+    #Binned_Dir = "TESSVectors_products"
     for Quat, EMI, Time, i in zip(
         BinnedQuats, BinnedEMI, TimeArr, [1, 2, 3]
     ):
         from datetime import date
 
-        fname = f"{Binned_Dir}/{typedict[i]}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{typedict[i]}.csv"
+        fname = f"{TESSVectors_Products_Base}/Vectors/{typedict[i]}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{typedict[i]}.csv"
         log.info(
             f"\t\tWriting Sector: {Sector} Camera: {Camera} Cadence {typedict[i]} to:"
         )
@@ -594,14 +649,14 @@ def write_vector_sector_camera(
                 f.write(
                     f"# Quat[1-4]_CRM_Med: The Quaternion #[1-4] median value with the highest and lowest values excluded \n\n"
                 )
-                f.write(f"# Earth_Distance: Distance to Earth in Re \n\n")
+                f.write(f"# Earth_Distance: Distance to Earth in Earth Radii \n\n")
                 f.write(
                     f"# Earth_Camera_Angle: Angle of Earth from Camera Boresight in Degrees \n\n"
                 )
                 f.write(
                     f"# Earth_Camera_Azimuth: Azimuth of Earth around Camera Boresight in Degrees \n\n"
                 )
-                f.write(f"# Moon_Distance: Distance to Moon in Re \n\n")
+                f.write(f"# Moon_Distance: Distance to Moon in Earth Radii \n\n")
                 f.write(
                     f"# Moon_Camera_Angle: Angle of Moon from Camera Boresight in Degrees \n\n"
                 )
@@ -737,8 +792,7 @@ def create_diagnostic_timeseries(Sector, Camera, Cadence):
         cadence_name = typedict[Cadence]
     else:
         cadence_name = Cadence
-    Binned_Dir = "TESSVectors_products"
-    fname = f"{Binned_Dir}/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}.csv"
+    fname = f"{TESSVectors_Products_Base}/Vectors/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}.csv"
 
     nplots = 3
     if os.path.isfile(fname):
@@ -783,7 +837,7 @@ def create_diagnostic_timeseries(Sector, Camera, Cadence):
         cbar.set_label("Data Flagging Level (Lower Is Better)", size=24, weight="bold")
 
         # plt.tight_layout()
-        fout = f"{Binned_Dir}/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}_Quat.png"
+        fout = f"{TESSVectors_Products_Base}/Diagnostics/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}_Quat.png"
         plt.show()
         plt.savefig(fout, dpi=300, bbox_inches="tight", rasterize=True)
         plt.close(fig)
@@ -805,14 +859,15 @@ def plot_lsperiodogram(ax, time, median, std, QuatLabel):
     return
 
 
-def create_diagnostic_periodogram(Sector, Camera, Cadence):
+def create_diagnostic_periodogram(Sector, Camera):
+    Cadence = 1
     typedict = typedict = {1: "020", 2: "120", 3: "FFI"}
     if type(Cadence) != str:
         cadence_name = typedict[Cadence]
     else:
         cadence_name = Cadence
     Binned_Dir = "TESSVectors_products"
-    fname = f"{Binned_Dir}/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}.csv"
+    fname = f"{TESSVectors_Products_Base}/Vectors/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}.csv"
 
     nplots = 3
     if os.path.isfile(fname):
@@ -855,7 +910,7 @@ def create_diagnostic_periodogram(Sector, Camera, Cadence):
         ax2.set_xlabel("Period [seconds]", weight="bold", size=24)
         ax2.tick_params(axis="x", labelsize=18)
 
-        fout = f"{Binned_Dir}/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}_QuatPower.png"
+        fout = f"{TESSVectors_Products_Base}/Diagnostics/Periodograms/TessVectors_S{Sector:03d}_C{Camera}_QuatPower.png"
         plt.savefig(fout, dpi=300, bbox_inches="tight")
         plt.close(fig)
 
@@ -870,8 +925,7 @@ def create_diagnostic_emi(Sector, Camera, Cadence):
         cadence_name = typedict[Cadence]
     else:
         cadence_name = Cadence
-    Binned_Dir = "TESSVectors_products"
-    fname = f"{Binned_Dir}/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}.csv"
+    fname = f"{TESSVectors_Products_Base}/Vectors/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}.csv"
 
     nplots = 3
     if os.path.isfile(fname):
@@ -970,7 +1024,7 @@ def create_diagnostic_emi(Sector, Camera, Cadence):
         cbar.ax.set_yticklabels(["Unflagged", "Aggressive", "Conservative"], size=18)
         cbar.set_label("Data Flagging Level (Lower Is Better)", size=24, weight="bold")
 
-        fout = f"{Binned_Dir}/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}_emi.png"
+        fout = f"{TESSVectors_Products_Base}/Diagnostics/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}_emi.png"
         plt.savefig(fout, dpi=300, bbox_inches="tight")
         # plt.show()
         plt.close(fig)
@@ -981,11 +1035,12 @@ def create_diagnostics_sector(Sector):
     # Sector, Camera, Cadence = SectorCameraCadence
     log.info(f"Creating Diagnostics for Sector: {Sector}")
     for Camera in [1, 2, 3, 4]:
+        create_diagnostic_periodogram(Sector, Camera)
         for Cadence in [1, 2, 3]:
             create_diagnostic_timeseries(Sector, Camera, Cadence)
             # Should I create the periodograms from the "raw" 2s data?  probably?
-            create_diagnostic_periodogram(Sector, Camera, Cadence)
             create_diagnostic_emi(Sector, Camera, Cadence)
+
 
 
 def TESSVectors_process_sector(Sector):
@@ -1015,7 +1070,7 @@ def run_bulk_diagnostics(sector_min = 1, sector_max = 65, camera_min = 1, camera
     pool.close()
 
 
-def run_bulk_vectors(sector_min = 1, sector_max = 65, processes=7):
+def run_bulk_vectors(sector_min = 1, sector_max = 69, processes=7):
     if not processes:
         processes = 7
     sector_list = range(sector_min, sector_max)
