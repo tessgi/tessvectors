@@ -113,17 +113,17 @@ flowchart TD;
 
     end
 
-TESSVectors_process_sector --> create_diagnostics_sector
+    TESSVectors_process_sector --> create_diagnostics_sector
 
-subgraph for each camera
-subgraph for each cadence 
-create_diagnostics_sector --> create_diagnostic_timeseries --> OT((Quaternion 
-Timeseries Plot))
-create_diagnostics_sector --> create_diagnostic_emi --> OE((Earth-Moon 
-Information Plot))
-end
-create_diagnostics_sector --> create_diagnostic_periodogram
-end
+    subgraph for each camera
+    subgraph for each cadence 
+    create_diagnostics_sector --> create_diagnostic_timeseries --> OT((Quaternion 
+    Timeseries Plot))
+    create_diagnostics_sector --> create_diagnostic_emi --> OE((Earth-Moon 
+    Information Plot))
+    end
+    create_diagnostics_sector --> create_diagnostic_periodogram
+    end
 
-end
+    end
 ```
