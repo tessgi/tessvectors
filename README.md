@@ -75,7 +75,7 @@ Initial development done by [Tyler Pritchard](https://github.com/tylerapritchard
 
 ### TESSVectors Code Workflow
 ```mermaid
-flowchart TD;
+flowchart TD
     subgraph For Each Sector
     TESSVectors_process_sector --> create_vectors_sector
     get_eng_data --> |Quaternion Data| create_vectors_sector
