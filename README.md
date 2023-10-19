@@ -74,16 +74,17 @@ While we have endeavoured to make these files as simple and straightforward to u
 Initial development done by [Tyler Pritchard](https://github.com/tylerapritchard), [Christina Hedges](https://github.com/christinahedges) the [TESS Science Support Center](https://heasarc.gsfc.nasa.gov/docs/tess/), and the [MIT TESS Science Operations Team](https://tess.mit.edu/). 
 
 ### TESSVectors Code Workflow
+[![TESSVectors CodeFlow](https://mermaid.ink/img/pako:eNqVVV9v2yAQ_yqIJ1dqvkAe9rDFlfoQNVOivcwTInC20QxYgNdNbb_7LsYNtElax08cvt-fO_D5iQorgS5p3dlH0XIXyG5VGYKPH_aN431L7qwjJRct2YII1sW3u3K7_THGnvXOCvCe-TEmi8UXIhzwAOzPlOEzZAOBgWmY5IGPuc_fB8x1RllDVrj5fB26RNPtYm0RfW9q-yH6tKZvXIPjiVuM8QTCSILB2j6r6TL7iM_ohWQCDJYbOS9LJkxQWmHFWsneKhM8C309F4xY8D8nFvCsdlYzzX2IGa8P-k05nRW8-3VUOCefzO2xKb8jcCbCQ6OxA6zje-hmYMDIvMlflWGHC8PiyX10MrNOJeMbd0fCdyKZkQQq1_czPMx0EMneGkgCMe8Ql38DGI9fClspEd6lZpyT1xictTZiH506vkh3KEnO8n-ZZNR4GEI_hKLIJga5Ux3c3Jy0NVvOmy9S8cZYH5SYc-qprosVkTcdO6U_Lx7vPzg1fQQPu6LIhtpUUcrZdDa8ln-tFGgVNcqiyEZfJDsMQKd5OKjmIsdv6Fq1Hg1babFZOqpuimKT7Z2IHJf0lmK_NVcS_y5Ph-2KhhY0VHSJSwNDcLyraGVeMJUPwW7_GUGXwQ1wS4ceBzys0Aiq0GXNO4-7IBVaXcc_lrCmVg19-Q8XM1dV?type=png)](https://mermaid.live/edit#pako:eNqVVV9v2yAQ_yqIJ1dqvkAe9rDFlfoQNVOivcwTInC20QxYgNdNbb_7LsYNtElax08cvt-fO_D5iQorgS5p3dlH0XIXyG5VGYKPH_aN431L7qwjJRct2YII1sW3u3K7_THGnvXOCvCe-TEmi8UXIhzwAOzPlOEzZAOBgWmY5IGPuc_fB8x1RllDVrj5fB26RNPtYm0RfW9q-yH6tKZvXIPjiVuM8QTCSILB2j6r6TL7iM_ohWQCDJYbOS9LJkxQWmHFWsneKhM8C309F4xY8D8nFvCsdlYzzX2IGa8P-k05nRW8-3VUOCefzO2xKb8jcCbCQ6OxA6zje-hmYMDIvMlflWGHC8PiyX10MrNOJeMbd0fCdyKZkQQq1_czPMx0EMneGkgCMe8Ql38DGI9fClspEd6lZpyT1xictTZiH506vkh3KEnO8n-ZZNR4GEI_hKLIJga5Ux3c3Jy0NVvOmy9S8cZYH5SYc-qprosVkTcdO6U_Lx7vPzg1fQQPu6LIhtpUUcrZdDa8ln-tFGgVNcqiyEZfJDsMQKd5OKjmIsdv6Fq1Hg1babFZOqpuimKT7Z2IHJf0lmK_NVcS_y5Ph-2KhhY0VHSJSwNDcLyraGVeMJUPwW7_GUGXwQ1wS4ceBzys0Aiq0GXNO4-7IBVaXcc_lrCmVg19-Q8XM1dV)
 ```mermaid
 flowchart TD
     subgraph For Each Sector
     TESSVectors_process_sector --> create_vectors_sector
     get_eng_data --> |Quaternion Data| create_vectors_sector
     get_eng_data --> |Earth-Moon Info| create_vectors_sector
-    subgraph for each camera
+    subgraph For Each Camera
     get_camera_sector_cadences --> create_vectors_sector
     
-    subgraph for each cadence
+    subgraph For Each Cadence
     get_ccd_centers --> get_camera_sector_cadences
     get_timing_midpoints_tpf --> get_camera_sector_cadences
     gettimes[get_times_from_mast
@@ -94,12 +95,12 @@ flowchart TD
     
     Bin_Quat_Camera --> create_vectors_sector
 
-    subgraph for each cadence
+    subgraph For Each Cadence
     Bin_Quat_Cadence --> Bin_Quat_Camera
     end
 
     Bin_EMI_Camera --> create_vectors_sector
-    subgraph for each cadence
+    subgraph For Each Cadence
     Bin_EMI_Cadence --> Bin_EMI_Camera
     EMI_Extension_Dict --> Bin_EMI_Cadence
     end
@@ -107,7 +108,7 @@ flowchart TD
 
     create_vectors_sector --> write_vector_sector_camera
     
-    subgraph for each cadence
+    subgraph For Each Cadence
     write_vector_sector_camera --> Output((TESSVectors File))
     end
 
@@ -115,14 +116,14 @@ flowchart TD
 
     TESSVectors_process_sector --> create_diagnostics_sector
 
-    subgraph for each camera
-    subgraph for each cadence 
+    subgraph For Each Camera
+    subgraph For Each Cadence 
     create_diagnostics_sector --> create_diagnostic_timeseries --> OT((Quaternion 
     Timeseries Plot))
     create_diagnostics_sector --> create_diagnostic_emi --> OE((Earth-Moon 
     Information Plot))
     end
-    create_diagnostics_sector --> create_diagnostic_periodogram
+    create_diagnostics_sector --> create_diagnostic_periodogram --> OP((Periodogram Plot))
     end
 
     end
