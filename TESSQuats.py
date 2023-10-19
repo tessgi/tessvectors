@@ -10,7 +10,6 @@ import warnings
 import logging
 import requests
 from bs4 import BeautifulSoup
-import fitsio
 import pandas as pd
 import os
 
@@ -23,6 +22,8 @@ import lightkurve as lk
 import multiprocessing
 from itertools import product
 
+log = logging.getLogger("TESSQuats")
+log.setLevel(logging.INFO)
 
 # Lint with black and push
 def get_ccd_centers(Sector, Camera, CCD):
@@ -50,62 +51,72 @@ def get_ccd_centers(Sector, Camera, CCD):
 
 
 # Get a timing array
+
+def get_times_from_mast(ra, dec, Sector, exptime):
+    # This queries external data and occasionally times out
+    # Built in some redundancy
+    max_attempts = 5
+    while max_attempts:
+        try:
+            if exptime != "ffi":
+                # Use TESSCut for an FFI
+                results = lk.search_targetpixelfile(
+                    f"{ra} {dec}",
+                    radius=1e4,
+                    sector=Sector,
+                    mission="TESS",
+                    exptime=exptime,
+                    limit=1,
+                    author="SPOC",
+                ).download(quality_bitmask="none")
+            else:
+                results = lk.search_tesscut(f"{ra} {dec}", sector=Sector).download(
+                    cutout_size=(1, 1), quality_bitmask="none"
+                )
+            break
+        except TimeoutError:
+            max_attempts -= 1
+    return results
+
+def get_times_local(Sector, Camera, exptime):
+    raise NotImplementedError
+    return results
+
 def get_timing_midpoints_tpf(
-    ra_c, dec_c, Sector, exptime, tpf_orbit_labels=None, tpf_times=None
-):
+    ra_c, dec_c, Sector, Camera, exptime, break_times=None, local=False):
     """Given A RA, DEC position, Sector, and observing cadence -
     return an array with the ob served times extracted from a TPF
 
-    This has grown - now also returns FFI filenames and orbit breaks as these
+    This has grown - now also returns FFI filenames and segment breaks as these
     also use information derived from the tpfs
     """
 
     timing_benchmark = []
     for ra, dec in zip(ra_c, dec_c):
-        # This queries external data and occasionally times out
-        # Built in some redundancy
-        max_attempts = 5
-        while max_attempts:
-            try:
-                if exptime != "ffi":
-                    # Use TESSCut for an FFI
-                    results = lk.search_targetpixelfile(
-                        f"{ra} {dec}",
-                        radius=1e4,
-                        sector=Sector,
-                        mission="TESS",
-                        exptime=exptime,
-                        limit=1,
-                        author="SPOC",
-                    ).download(quality_bitmask="none")
-                else:
-                    results = lk.search_tesscut(f"{ra} {dec}", sector=Sector).download(
-                        cutout_size=(1, 1), quality_bitmask="none"
-                    )
-                break
-            except TimeoutError:
-                max_attempts -= 1
-
-        # Get timecorr, correct for it
-        # lightkurve PR?
-        nonzero_mask = np.nonzero(results.time.value != 0)
-
-        hdu = fits.open(results.path)
-        timing_corr = hdu[1].data["TIMECORR"][nonzero_mask]
-        timing_ccd = results.time.value[nonzero_mask] - timing_corr
-        ffi_list = []
-        if exptime == "ffi":
-            ffi_list = hdu[1].data["FFI_FILE"][nonzero_mask]
-        hdu.close
-
-        # get the orbit breaks from the TPF Quality Flags
-        # this just got very messy since TESSCut TPFs now need the SPOC TPF's for orbit labeling
-        if exptime == "ffi" and isinstance(tpf_orbit_labels, np.ndarray):
-            orbit_list = label_orbit_cadence_ffi(
-                results.quality, results.time.value, tpf_orbit_labels, tpf_times
+        if not local:
+            results = get_times_from_mast(
+                ra, dec, Sector, exptime
             )
         else:
-            orbit_list = label_orbit_cadence(results.quality, results.time.value)
+            results = get_times_local(Sector, Camera, exptime)
+    
+        # Get timecorr, correct for it
+        # lightkurve PR?
+        nonzero_mask = np.nonzero(results.time.value)  
+
+        with fits.open(results.path) as hdu:
+            timing_corr = hdu[1].data["TIMECORR"][nonzero_mask]
+            timing_ccd = results.time.value[nonzero_mask] - timing_corr
+            ffi_list = []
+            if exptime == "ffi":
+                ffi_list = hdu[1].data["FFI_FILE"][nonzero_mask]
+
+        # Calculate break times from 120s data and asign labeling from them
+        # if ffi or 020 
+        if (break_times is None):
+            break_times = get_break_times(results.time.value)
+        
+        segment_list = get_segment_label(results.time.value, break_times)
 
         if len(timing_benchmark) == 0:
             timing_benchmark = timing_ccd
@@ -114,28 +125,30 @@ def get_timing_midpoints_tpf(
         else:
             if not np.allclose(timing_benchmark, timing_ccd, rtol=1e-6):
                 warnings.warn(f"Timing Cadence Mismatch in {exptime} TPF Data")
-                Print(f"Length of Benchmark: {len(timing_benchmark)}")
-                Print(f"Length of Comparison CCD: {len(timing_ccd)}")
+                log.warning(f"Length of Benchmark: {len(timing_benchmark)}")
+                log.warning(f"Length of Comparison CCD: {len(timing_ccd)}")
                 if len(timing_benchmark) == len(timing_ccd):
-                    Print(
+                    log.warning(
                         f"Maximum Difference between the arrays: {max(abs(timing_benchmark-timing_ccd))}"
                     )
                 # maybe set timing_benchmark = union of two timing sets here
                 # swap above prints to logging-debug
     # Add in supplementrary Information
-    TimingArr = np.zeros((4, len(timing_benchmark)), dtype=np.double)
+    TimingArr = np.zeros((5, len(timing_benchmark)), dtype=np.double)
     TimingArr[0] = timing_benchmark
     TimingArr[1] = timing_corr
     TimingArr[2] = cadences
     TimingArr[3] = quality
-    return TimingArr, orbit_list, ffi_list
+    TimingArr[4] = segment_list
+
+    return TimingArr, break_times, ffi_list
 
 
 def get_camera_sector_cadences(Sector, Camera):
-    """For a given Sector, Camera Get the TimingMidpoint Arrays and OrbitLabels
+    """For a given Sector, Camera Get the TimingMidpoint Arrays and segmentLabels
     For each Cadence in addition to the FFI File List
 
-    Returns midpoints, orbitslabels, and ffilist arrays
+    Returns midpoints, segmentslabels, and ffilist arrays
     """
     cutoff_20s = 27  # No 20s data before cycle_whatever
     CCD_List = [1]  # (1,2,3,4)
@@ -153,34 +166,35 @@ def get_camera_sector_cadences(Sector, Camera):
         dec_c.append(dec)
 
     midpoint_20s = None
-    orbit_20s = None
-
+    
+    # Get 120s TPF Timing
+    log.info(f"\t\tGetting 120s Cadence Midpoints")
+    midpoint_120s, break_times, _ = get_timing_midpoints_tpf(
+        ra_c, dec_c, Sector, Camera, "short"
+    )
+    
     # update variable name, midpoint is now a list of objects including the midpoints
     if Sector >= cutoff_20s:
         # Get high-cadence 20s timing
-        print(f"\t\tGetting 20s Cadence Midpoints")
-        midpoint_20s, orbit_20s, _ = get_timing_midpoints_tpf(
-            ra_c, dec_c, Sector, "fast"
+        log.info(f"\t\tGetting 20s Cadence Midpoints")
+        midpoint_20s, _, _ = get_timing_midpoints_tpf(
+            ra_c, dec_c, Sector, Camera, "fast",
+            break_times=break_times,
         )
-    # Get 120s TPF Timing
-    midpoint_120s, orbit_120s, _ = get_timing_midpoints_tpf(
-        ra_c, dec_c, Sector, "short"
-    )
-    print(f"\t\tGetting 120s Cadence Midpoints")
+
     # Get FFI Timing
-    midpoint_ffi, orbit_ffi, ffi_list = get_timing_midpoints_tpf(
+    log.info(f"\t\tGetting FFI Cadence Midpoints")
+    midpoint_ffi, _, ffi_list = get_timing_midpoints_tpf(
         ra_c,
         dec_c,
         Sector,
+        Camera,
         "ffi",
-        tpf_orbit_labels=orbit_120s,
-        tpf_times=midpoint_120s[0],
+        break_times=break_times,
     )
 
-    print(f"\t\tGetting FFI Cadence Midpoints")
     midpoints = [midpoint_20s, midpoint_120s, midpoint_ffi]
-    orbits = [orbit_20s, orbit_120s, orbit_ffi]
-    return midpoints, orbits, ffi_list
+    return midpoints, ffi_list
 
 
 def listFD(url, ext=""):
@@ -193,30 +207,16 @@ def listFD(url, ext=""):
         if node.get("href").endswith(ext)
     ]
 
-
-def get_quat_data(Sector):
-    """For a given sector, fetch the quat data object using a remote fits read"""
-    # could do local vs remote, using a config file or passed parameter
-    base_url = "https://archive.stsci.edu/missions/tess/engineering"
-    filelist = [file for file in listFD(base_url, f"sector{Sector:02d}-quat.fits")]
-    # Right now there is only 1 processing time per sector, this could change
-    # For now assume this is a singular value
-    # TODO Later should potentially code some logic to use the largest number/latest processing
-    # QuatData=fitsio.FITS(filelist[0])
-    print(f"\tGetting Quaternion Data for Sector: {Sector}")
-    QuatData = fits.open(filelist[0])
-    return QuatData
-
-
-def get_emi_data(Sector):
-    """For a given sector, fetch the emi data object using a remote fits read"""
-    # combine this with get_quat above, using an input search string
-    base_url = "https://archive.stsci.edu/missions/tess/engineering"
-    filelist = [file for file in listFD(base_url, f"sector{Sector:02d}-emi.fits")]
-    # Right now there is only 1 processing time per sector, this could change
-    print(f"\tGetting EMI Data for Sector: {Sector}")
-    EMIData = fits.open(filelist[0])
-    return EMIData
+def get_eng_data(Sector, eng, local=False):
+    log.info(f"\tGetting Engineering Data Type: {eng} for Sector: {Sector}")
+    if(not local):
+         base_url = "https://archive.stsci.edu/missions/tess/engineering"
+         filelist = [file for file in listFD(base_url, f"sector{Sector:02d}-{eng}.fits")]
+         # TODO Later should potentially code some logic to use the largest number/latest processing
+         EngData = fits.open(filelist[0])
+    else:
+        raise NotImplementedError
+    return EngData
 
 
 def Bin_Quat_Cadence(cadence, CameraData, Camera):
@@ -225,26 +225,28 @@ def Bin_Quat_Cadence(cadence, CameraData, Camera):
     CameraData - Quaternion Data For Camera from the quat engineering file
     Camera - Camera Number
     """
-    ExpTime = np.double(
-        abs(cadence[1] - cadence[0])
-    )  # Should this be hard-coded instead? prbly med
-    # print(ExpTime)
-    SubArr_Len = int(2 * (ExpTime * (60.0 * 60.0 * 24.0) / 2.0))
+    ExpTime = np.double(np.median(np.abs(np.diff(cadence))))
+    log.debug(f"ExpTime={ExpTime}")
+    SubArr_Len = int(ExpTime * (60.0 * 60.0 * 24.0)) # convert days to seconds, 
+    # Nbins = ExpTime(seconds), since quats have 2s exposures - this means
+    # SubArr_Len is twice as many bins as we expect to need 
+
     Time_Len = len(cadence)
     Source_Len = len(CameraData["Time"])
     BinnedQuats = np.zeros(
         (17, Time_Len), dtype=np.double
     )  # ( 8 Quat Vectors * 3 + 2 (Tmin/max) + #GS + MSTot + FoM)
-    submask_length = 2 * ExpTime
     min_ind = int(0)
     max_ind = SubArr_Len  # Days -> Seconds / 2 S per Quat Exp
+   
     Flag_ZeroMask = 0
-    # print(f"Index Time Length: {Time_Len}")
-    # print(f"Source Time Length: {len(CameraData)}")
+    #Debug Output
+    log.debug(f"Index Time Length: {Time_Len}")
+    log.debug(f"Source Time Length: {len(CameraData)}")
 
     for i in range(Time_Len - 1):
-        # print(f"min: {min_ind} max: {max_ind} max_len: {Time_Len} SubArr_Len: {SubArr_Len}")
-        # print(f"i: {i} ")
+        log.debug(f"min: {min_ind} max: {max_ind} max_len: {Time_Len} SubArr_Len: {SubArr_Len}")
+        log.debug(f"i: {i} ")
 
         if i < (Time_Len - 1):
             while CameraData["Time"][max_ind] < cadence[i + 1]:
@@ -262,24 +264,20 @@ def Bin_Quat_Cadence(cadence, CameraData, Camera):
 
         if len(mask[0]) == 0:
             Flag_ZeroMask = Flag_ZeroMask + 1
-        """ saving the below comments for a logging conversion 
-            yeah yeah tyler do logging """
-        # print(f"\t\t\t\tWarning: 0 Quaternions found in the time bin!")
-        # print(f"Min: {CameraData['Time'][min_ind]}")
-        # print(f"Max: {CameraData['Time'][max_ind]}")
-        # print(f"Cadence: {cadence[i]}")
-        # print(f"ExpTime: {ExpTime}")
-        # print(f"ArrEq: {abs(np.double(SubArr['Time'] - cadence[i])) < np.double(np.double(0.5) * ExpTime)}")
-        # print(f"DMin: {cadence[i] - 0.5 * ExpTime}")
-        # print(f"DMax: {cadence[i] + 0.5 * ExpTime}")
-        # print(f"SubArr: {SubArr['Time']}")
-        # print(f"Abs(SubArr-Cadence): {abs(np.double(SubArr['Time'] - cadence[i]))}")
 
-        # print(SubArr['Time'] - cadence[i])
-        # print(cadence[i])
-        # print(mask)
-        # print(f"Mask: {mask}")
-        # print(f"Mask_Len: {len(mask[0])}")
+        #Debug Output
+        log.debug(f"\t\t\t\tWarning: 0 Quaternions found in the time bin!")
+        log.debug(f"Min: {CameraData['Time'][min_ind]}")
+        log.debug(f"Max: {CameraData['Time'][max_ind]}")
+        log.debug(f"Cadence: {cadence[i]}")
+        log.debug(f"ExpTime: {ExpTime}")
+        log.debug(f"ArrEq: {abs(np.double(SubArr['Time'] - cadence[i])) < np.double(np.double(0.5) * ExpTime)}")
+        log.debug(f"DMin: {cadence[i] - 0.5 * ExpTime}")
+        log.debug(f"DMax: {cadence[i] + 0.5 * ExpTime}")
+        log.debug(f"SubArr: {SubArr['Time']}")
+        log.debug(f"Abs(SubArr-Cadence): {abs(np.double(SubArr['Time'] - cadence[i]))}")
+        log.debug(f"Mask: {mask}")
+        log.debug(f"Mask_Len: {len(mask[0])}")
         if len(mask[0]) != 0:
             BinnedQuats[0][i] = np.min(SubArr["Time"][mask])  # Min Midpoint Binned
             BinnedQuats[1][i] = np.max(SubArr["Time"][mask])  # Max Midpoint Binned
@@ -327,7 +325,7 @@ def Bin_Quat_Cadence(cadence, CameraData, Camera):
             max_ind = Source_Len - 1
 
     if Flag_ZeroMask > 0:
-        print(
+        log.info(
             f"\t\t\t\tWARNING: Zero Quaternions found for {Flag_ZeroMask} observed cadences"
         )
     return BinnedQuats
@@ -388,7 +386,7 @@ def Bin_EMI_Cadence(cadence, EMIData, Camera, type):
                 * 4
             )
         case _:
-            print("Error - Bin_EMI_Cadence can't match cadence type")
+            log.info("Error - Bin_EMI_Cadence can't match cadence type")
             # throw a logging warning instead
 
     Time_Len = len(cadence)
@@ -438,7 +436,7 @@ def Bin_EMI_Cadence(cadence, EMIData, Camera, type):
                 EMI_Extension_Dict(f"emi.cam{Camera}_moon_azimuth")
             ].data[min_ind:max_ind]["VALUE"][match_ind]
         else:
-            print("Bin_EMI_Cadence can't match a datapoint")
+            log.info("Bin_EMI_Cadence can't match a datapoint")
             # throw a real logging.warning
 
         min_ind = min_ind + int(match_ind)
@@ -457,11 +455,11 @@ def Bin_Quat_Camera(CameraData, TimeArr, Camera):
     """
     Bin20 = None
     if TimeArr[0] is not None:
-        print("\t\tBinning 20s Quaternion Data")
+        log.info("\t\tBinning 20s Quaternion Data")
         Bin20 = Bin_Quat_Cadence(TimeArr[0][0], CameraData, Camera)
-    print("\t\tBinning 120s Quaternion Data")
+    log.info("\t\tBinning 120s Quaternion Data")
     Bin120 = Bin_Quat_Cadence(TimeArr[1][0], CameraData, Camera)
-    print("\t\tBinning FFI Quaternion Data")
+    log.info("\t\tBinning FFI Quaternion Data")
     BinFFI = Bin_Quat_Cadence(TimeArr[2][0], CameraData, Camera)
 
     return Bin20, Bin120, BinFFI
@@ -475,97 +473,58 @@ def Bin_EMI_Camera(EMIData, TimeArr, Camera):
     """
     EMI20 = None
     if TimeArr[0] is not None:
-        print("\t\tBinning 20s EMI Data")
+        log.info("\t\tBinning 20s EMI Data")
         EMI20 = Bin_EMI_Cadence(TimeArr[0][0], EMIData, Camera, "020")
-    print("\t\tBinning 120s EMI Data")
+    log.info("\t\tBinning 120s EMI Data")
     EMI120 = Bin_EMI_Cadence(TimeArr[1][0], EMIData, Camera, "120")
-    print("\t\tBinning FFI EMI Data")
+    log.info("\t\tBinning FFI EMI Data")
     EMIFFI = Bin_EMI_Cadence(TimeArr[2][0], EMIData, Camera, "FFI")
 
     return EMI20, EMI120, EMIFFI
 
+def get_break_times(times):
+    break_inds = np.where(np.diff(np.asarray(times)) > 1/24)[0] + 1
+    break_times = np.asarray([np.mean(times[ind -1:ind+1]) for ind in break_inds])
+    return break_times
 
-def label_orbit_cadence(quality, times):
-    """Create labels for orbits - using the quality flag and timing array
+def get_segment_label(times, break_times):
+    """Create labels for segments - using the quality flag and timing array
 
-    right now, an 'orbit' is every stretch of observations between earth point
+    right now, an 'segment' is every stretch of observations between earth point
     quality flags (=8), with each earth point stretch causing an increment in
-    orbit label
+    segment label
     """
-    # TODO ok, if I have to worry about multiple quality values should do tghe bitwise properly
-    NotObserving = (quality == 8) | (quality == 2) | (quality == 9) | (quality == 1)
-
-    orbit_labels = np.empty_like(times[times != 0])
-    # this is really stupid, do something better for segmentation
-    # I think this breaks from safeholds, need to find one and check,
-    # figure out a better way of indexing across everything at the
-    # same time
-    # #TODO This will break if there is ever a tpf exposure with time=0
-    # that is not an earth_point (safehold),
-    #  there are a number of 'indexing errors probably related to this?
-    # safemode = 2, whatelse?
-    # safemode doesnt fi this, track down
-    # attitude tweak = 1 also has time=0
-    # manual discontinuity = 9 also has time=0
-    # 8200?  I dont think thats a real bitwise value
-
-    # THIS WORKS FOR SPOC TPFS NOT TESSCUT
-    # TESSCUT is from the FFIs so has no t=0 blank cadences
-    # will need to build in interpolation for FFI's #TODO
-
-    # Could take the median of the break and use the time as a divider
     label = 1
-    orbit_ind = 0
-    for i in range(len(NotObserving)):
-        if NotObserving[i]:
-            if (i != 0) and (not NotObserving[i - 1]):
-                label += 1
-        else:
-            if orbit_ind < len(orbit_labels):
-                orbit_labels[orbit_ind] = label
-            orbit_ind += 1
+    # cut should not be nescessary
+    cut_times=times[times != 0]
+    segment_labels = np.zeros_like(cut_times)
 
-    if orbit_ind != len(orbit_labels):
-        print("\t\t\t Warning: Something went wrong with the orbit labels indexing")
-        print(
-            f"\t\t\t orbit_ind={orbit_ind} Length of orbit_labels={len(orbit_labels)}"
-        )
-        # yeah yeah tyler do logging
-    return orbit_labels
+    for btime in break_times:
+        if(label == 1):
+            segment_labels[cut_times < btime] = label
+        label += 1
+        segment_labels[cut_times > btime] = label
+    if(np.any(segment_labels == 0)):
+       raise RuntimeWarning("get_segment_label warning: Not all times have a segment label")
 
-
-def label_orbit_cadence_ffi(quality, times, tpf_orbit_labels, tpf_times):
-    # We're not using quality currently, but I think we might need it, delete when tested
-    orbit_labels = np.empty_like(times[times != 0])
-    # use labels from a spoc tpf to label the FFI's
-    orbits = np.unique(tpf_orbit_labels)
-    for orbit in orbits:
-        min_orbit_time = min(tpf_times[tpf_orbit_labels == orbit])
-        max_orbit_time = max(tpf_times[tpf_orbit_labels == orbit])
-        orbit_times = (times > min_orbit_time) & (times < max_orbit_time)
-        orbit_labels[orbit_times] = orbit
-        # TODO - indexing shennangians - what to do when there are (inevitably) FFI times that are
-        # not caputred by these boundaries?  Probably find the nearest orbit label and copy label?
-        # check for empty orbit labels & assign values
-    return orbit_labels
-
+    return segment_labels
 
 def write_vector_sector_camera(
-    BinnedQuats, BinnedEMI, OrbitLabel, FFIList, TimeArr, Sector, Camera
+    BinnedQuats, BinnedEMI, FFIList, TimeArr, Sector, Camera
 ):
     """Write TESSVectors Info to CSV files for all observed cadences"""
     typedict = {1: "020", 2: "120", 3: "FFI"}
     Binned_Dir = "TESSVectors_products"
-    for Quat, EMI, Time, Orbit, i in zip(
-        BinnedQuats, BinnedEMI, TimeArr, OrbitLabel, [1, 2, 3]
+    for Quat, EMI, Time, i in zip(
+        BinnedQuats, BinnedEMI, TimeArr, [1, 2, 3]
     ):
         from datetime import date
 
         fname = f"{Binned_Dir}/{typedict[i]}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{typedict[i]}.csv"
-        print(
+        log.info(
             f"\t\tWriting Sector: {Sector} Camera: {Camera} Cadence {typedict[i]} to:"
         )
-        print(f"\t\t\t to {fname}")
+        log.info(f"\t\t\t to {fname}")
 
         if Time is not None:
             # First write the File Header
@@ -659,7 +618,7 @@ def write_vector_sector_camera(
                     "Cadence": Time[2],
                     "MidTime": Time[0] + Time[1],
                     "TimeCorr": Time[1],
-                    "Orbit": Orbit,
+                    "Segment": Time[4],
                     "Quat_Start": Quat[0],
                     "Quat_Stop": Quat[1],
                     "Quat_MIN_FOM": Quat[2],
@@ -696,22 +655,20 @@ def write_vector_sector_camera(
             #        ).to_csv(fname, index=False, mode = "a")
             df.to_csv(fname, index=False, mode="a")
 
-
-def bin_Sector(Sector):
+def create_vectors_sector(Sector):
     """For a given sector, create TESSVectors Information and write to a CSV file"""
-    # lower case sector?  big S class
-    # The Quat and EMI files have all cameras in one file
-    #   - read in once, then pass across Cameras
-    print(f"Starting Sector: {Sector}")
-    QuatData = get_quat_data(Sector)
-    EMIData = get_emi_data(Sector)
+
+    log.info(f"Starting Sector: {Sector}")
+    QuatData = get_eng_data(Sector, 'quat')
+    EMIData = get_eng_data(Sector, 'emi')
+
     for Camera in [1, 2, 3, 4]:
-        print(f"\tStarting Camera: {Camera}")
-        TimeArr, OrbitLabels, FFIList = get_camera_sector_cadences(Sector, Camera)
+        log.info(f"\tStarting Camera: {Camera}")
+        TimeArr, FFIList = get_camera_sector_cadences(Sector, Camera)
         BinnedQuats = Bin_Quat_Camera(QuatData[Camera].data, TimeArr, Camera)
         BinnedEMI = Bin_EMI_Camera(EMIData, TimeArr, Camera)
         write_vector_sector_camera(
-            BinnedQuats, BinnedEMI, OrbitLabels, FFIList, TimeArr, Sector, Camera
+            BinnedQuats, BinnedEMI, FFIList, TimeArr, Sector, Camera
         )
 
 
@@ -774,7 +731,7 @@ def plot_quat(axs, time, quat, dev, qual, QuatLabel):
 
 
 def create_diagnostic_timeseries(Sector, Camera, Cadence):
-    # TODO add orbit labels to plot?
+    # TODO add segment labels to plot?
     typedict = {1: "020", 2: "120", 3: "FFI"}
     if type(Cadence) != str:
         cadence_name = typedict[Cadence]
@@ -1019,64 +976,64 @@ def create_diagnostic_emi(Sector, Camera, Cadence):
         plt.close(fig)
 
 
-def Create_Diagnostics_Sector(Sector):
+def create_diagnostics_sector(Sector):
     # CameraCadence
     # Sector, Camera, Cadence = SectorCameraCadence
-    print(f"Creating Diagnostics for Sector: {Sector}")
+    log.info(f"Creating Diagnostics for Sector: {Sector}")
     for Camera in [1, 2, 3, 4]:
         for Cadence in [1, 2, 3]:
             create_diagnostic_timeseries(Sector, Camera, Cadence)
             # Should I create the periodograms from the "raw" 2s data?  probably?
             create_diagnostic_periodogram(Sector, Camera, Cadence)
-            create_diagnostic_ephemerides(Sector, Camera, Cadence)
+            create_diagnostic_emi(Sector, Camera, Cadence)
 
 
 def TESSVectors_process_sector(Sector):
-    bin_Sector(Sector)
+    create_vectors_sector(Sector)
     try:
-        Create_Diagnostics_Sector(Sector)
+        create_diagnostics_sector(Sector)
     except:
-        print("\t\t\t Warning, Plotting failed")  # add a real warning
+        log.warning("\t\t\t Warning, Plotting failed")  # add a real warning
         pass
 
     return (Sector, True)
 
 
-def run_bulk_diagnostics():
-    sector_list = range(1, 65)
-    camera_list = range(1, 4)
+def run_bulk_diagnostics(sector_min = 1, sector_max = 65, camera_min = 1, camera_max = 4, processes=7):
+    sector_list = range(sector_min, sector_max)
+    camera_list = range(camera_min, camera_max)
     cadence_list = range(1, 3)
     inlist = list(product(sector_list, camera_list, cadence_list))
 
     from multiprocessing.pool import Pool
     from itertools import product
 
-    pool = Pool(processes=7)
+    pool = Pool(processes=processes)
     res = []
     for result in pool.map(create_diagnostics_bulk, inlist):
         res = [res, result]
     pool.close()
 
 
-def run_bulk_quats(processes=7):
+def run_bulk_vectors(sector_min = 1, sector_max = 65, processes=7):
     if not processes:
         processes = 7
-    sector_list = range(1, 65)
+    sector_list = range(sector_min, sector_max)
 
     from multiprocessing.pool import Pool
 
     pool = Pool(processes=processes)
     res = []
-    for result in pool.map(bin_Sector, sector_list):
+    for result in pool.map(create_vectors_sector, sector_list):
         res = [res, result]
     pool.close()
 
 
-def run_bulk_processing():
+def run_bulk_processing(sector_min = 1, sector_max = 65):
     from multiprocessing.pool import Pool
     import multiprocessing as mp
 
-    sector_list = range(1, 65)
+    sector_list = range(sector_min, sector_max)
 
     pool = Pool(processes=mp.cpu_count())
     res = []
