@@ -1,19 +1,24 @@
-import astropy.io.fits as fits
-from astropy.stats import sigma_clipped_stats
-import matplotlib.pyplot as plt
-from matplotlib import cm
-
-from lightkurve import TessQualityFlags
-import numpy as np
+import os
+import sys
+import glob
 import subprocess
 import warnings
 import logging
 import requests
+
+import astropy.io.fits as fits
+from astropy.stats import sigma_clipped_stats
+
+import matplotlib.pyplot as plt
+from matplotlib import cm
+import matplotlib as mpl
+
+from lightkurve import TessQualityFlags
+import numpy as np
+
 from bs4 import BeautifulSoup
 import pandas as pd
-import os
-import sys
-import matplotlib as mpl
+
 
 mpl.rcParams["agg.path.chunksize"] = 10000000
 
@@ -22,6 +27,11 @@ import lightkurve as lk
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 log = logging.getLogger("TESSQuats")
 log.setLevel(logging.INFO)
+
+#logging.basicConfig(level=logging.DEBUG, stream=sys.stdout)
+#log = logging.getLogger("TESSQuats")
+#log.setLevel(logging.DEBUG)
+
 
 TESSVectors_Products_Base = 'Products'
 
@@ -84,8 +94,10 @@ def get_times_from_mast(ra, dec, Sector, exptime):
     return results
 
 def get_times_local(Sector, Camera, exptime):
-    if(exptime != 'ffi'):
-        regex = f"*s{Sector:04d}*ffic.fits "
+    if(exptime == 'ffi'):
+        # We need to choose 1 ccd per camera to index our times off of, here we'll use CCD 1
+        ccd_index=1
+        regex = f"*s{Sector:04d}-{Camera}-{ccd_index}*ffic.fits "
         ffi_list = glob.glob(f"{TESSVectors_Local_tpf_ffi_path}{regex}")
         timing_benchmark = []
         timing_corr = []
@@ -106,10 +118,10 @@ def get_times_local(Sector, Camera, exptime):
         if exptime == 'short':
             regex = f"*s{Sector:04d}*s_tp.fits"
             path = TESSVectors_Local_tpf_short_path
+
         if exptime == 'fast':
             regex = f"*s{Sector:04d}*fast-tp.fits"
             path = TESSVectors_Local_tpf_fast_path
-        
         tpf_list = glob.glob(f"{path}{regex}")
 
         cam = 0
@@ -133,16 +145,19 @@ def get_timing_midpoints_tpf(
     This has grown - now also returns FFI filenames and segment breaks as these
     also use information derived from the tpfs
     """
-
+    local_processing = TESSVectos_local or local
     timing_benchmark = []
-    if(exptime != 'ffi' and not (TESSVectos_local or local)):
+    if((exptime != 'ffi') or 
+       ((exptime == 'ffi') and (not local_processing))):
         # If we are NOT doing FFI Local Processing
         for ra, dec in zip(ra_c, dec_c):
-            if (not TESSVectos_local) or (not local):
+            if not local_processing:
+                log.info(f"\t\t\tUsing Remote Data To Retrieve Times Sector:{Sector} Camera: {Camera} ExpTime: {exptime}")
                 results = get_times_from_mast(
                     ra, dec, Sector, exptime
                 )
             else:
+                log.info(f"\t\t\tUsing LOCAL Data To Retrieve Times Sector:{Sector} Camera: {Camera} ExpTime: {exptime}")
                 results = get_times_local(Sector, Camera, exptime)
 
             # Get timecorr, correct for it
@@ -174,14 +189,15 @@ def get_timing_midpoints_tpf(
                     # swap above prints to logging-debug
     else:
         # If we are doing ffi local processing
+        log.info(f"\t\t\tUsing LOCAL Data To Retrieve Times Sector:{Sector} Camera: {Camera} ExpTime: {exptime}")
         timing_benchmark, timing_corr, cadences, quality = get_times_local(Sector, Camera, exptime)
 
     # Calculate break times from 120s data and asign labeling from them
     # if ffi or 020 
     if (break_times is None):
-        break_times = get_break_times(timing_benchmark.value)
+        break_times = get_break_times(timing_benchmark)
         
-    segment_list = get_segment_label(timing_benchmark.value, break_times)
+    segment_list = get_segment_label(timing_benchmark, break_times)
 
 
     # Add in supplementrary Information
@@ -281,7 +297,7 @@ def Bin_Quat_Cadence(cadence, CameraData, Camera):
     Camera - Camera Number
     """
     ExpTime = np.double(np.median(np.abs(np.diff(cadence))))
-    log.debug(f"ExpTime={ExpTime}")
+    log.debug(f"Bin_Quat_Cadence: ExpTime={ExpTime}")
     SubArr_Len = int(ExpTime * (60.0 * 60.0 * 24.0)) # convert days to seconds, 
     # Nbins = ExpTime(seconds), since quats have 2s exposures - this means
     # SubArr_Len is twice as many bins as we expect to need 
@@ -296,19 +312,45 @@ def Bin_Quat_Cadence(cadence, CameraData, Camera):
    
     Flag_ZeroMask = 0
     #Debug Output
-    log.debug(f"Index Time Length: {Time_Len}")
-    log.debug(f"Source Time Length: {len(CameraData)}")
+    log.debug(f"Bin_Quat_Cadence: Index Time Length: {Time_Len}")
+    log.debug(f"Bin_Quat_Cadence: Source Time Length: {len(CameraData)}")
 
     for i in range(Time_Len - 1):
-        log.debug(f"min: {min_ind} max: {max_ind} max_len: {Time_Len} SubArr_Len: {SubArr_Len}")
+        log.debug(f"Bin_Quat_Cadence: min: {min_ind} max: {max_ind} max_len: {Time_Len} SubArr_Len: {SubArr_Len}")
         log.debug(f"i: {i} ")
 
-        if i < (Time_Len - 1):
-            while CameraData["Time"][max_ind] < cadence[i + 1]:
+        t0=CameraData["Time"][min_ind]
+        t1=CameraData["Time"][max_ind]
+        if(t0 > cadence[i]):
+            log.debug(f"Index: {i}/{Time_Len} , min, max_ind / source_len: {min_ind}, {max_ind} / {Source_Len} min, max / Time:{t0}, {t1}/ {cadence[i]}")
+
+        if i < (Time_Len - 1) and (max_ind < Source_Len - 1):
+            while (CameraData["Time"][max_ind] < cadence[i + 1]):
                 max_ind = max_ind + SubArr_Len
-        if i > 1:
-            while CameraData["Time"][min_ind] > cadence[i - 1]:
+                log.debug(f"\tAdjusting Max Ind: {max_ind}")
+
+                if(max_ind > (Source_Len - 1)):
+                    max_ind = Source_Len - 1
+                    log.debug(f"\tAdjusting Max Ind: {max_ind}")
+
+
+        if (i > 1) and (min_ind > 0):
+            while (CameraData["Time"][min_ind] > cadence[i - 1]):
                 min_ind = min_ind - 1
+                log.debug(f"\tAdjusting Min Ind: {min_ind}")
+
+                if(min_ind < 0):
+                    min_ind = 0
+                    log.debug(f"\tAdjusting Min Ind: {min_ind}")
+
+
+        if(max_ind > (Source_Len - 1)):
+            max_ind = Source_Len - 1
+            log.debug(f"\tAdjusting Max Ind: {max_ind}")
+
+        if(min_ind < 0):
+            min_ind = 0
+            log.debug(f"\tAdjusting Min Ind: {min_ind}")
 
         SubArr = CameraData[min_ind:max_ind]
 
@@ -321,18 +363,18 @@ def Bin_Quat_Cadence(cadence, CameraData, Camera):
             Flag_ZeroMask = Flag_ZeroMask + 1
 
         #Debug Output
-        log.debug(f"\t\t\t\tWarning: 0 Quaternions found in the time bin!")
-        log.debug(f"Min: {CameraData['Time'][min_ind]}")
-        log.debug(f"Max: {CameraData['Time'][max_ind]}")
-        log.debug(f"Cadence: {cadence[i]}")
-        log.debug(f"ExpTime: {ExpTime}")
-        log.debug(f"ArrEq: {abs(np.double(SubArr['Time'] - cadence[i])) < np.double(np.double(0.5) * ExpTime)}")
-        log.debug(f"DMin: {cadence[i] - 0.5 * ExpTime}")
-        log.debug(f"DMax: {cadence[i] + 0.5 * ExpTime}")
-        log.debug(f"SubArr: {SubArr['Time']}")
-        log.debug(f"Abs(SubArr-Cadence): {abs(np.double(SubArr['Time'] - cadence[i]))}")
-        log.debug(f"Mask: {mask}")
-        log.debug(f"Mask_Len: {len(mask[0])}")
+        log.debug(f"\t\t\t\tBin_Quat_Cadence: Warning: 0 Quaternions found in the time bin!")
+        log.debug(f"Bin_Quat_Cadence: Min Time : {CameraData['Time'][min_ind]}")
+        log.debug(f"Bin_Quat_Cadence: Max Time: {CameraData['Time'][max_ind]}")
+        log.debug(f"Bin_Quat_Cadence: Cadence: {cadence[i]}")
+        log.debug(f"Bin_Quat_Cadence: ExpTime: {ExpTime}")
+        log.debug(f"Bin_Quat_Cadence: ArrEq: {abs(np.double(SubArr['Time'] - cadence[i])) < np.double(np.double(0.5) * ExpTime)}")
+        log.debug(f"Bin_Quat_Cadence: DMin: {cadence[i] - 0.5 * ExpTime}")
+        log.debug(f"Bin_Quat_Cadence: DMax: {cadence[i] + 0.5 * ExpTime}")
+        log.debug(f"Bin_Quat_Cadence: SubArr: {SubArr['Time']}")
+        log.debug(f"Bin_Quat_Cadence: Abs(SubArr-Cadence): {abs(np.double(SubArr['Time'] - cadence[i]))}")
+        log.debug(f"Bin_Quat_Cadence: Mask: {mask}")
+        log.debug(f"Bin_Quat_Cadence: Mask_Len: {len(mask[0])}")
         if len(mask[0]) != 0:
             BinnedQuats[0][i] = np.min(SubArr["Time"][mask])  # Min Midpoint Binned
             BinnedQuats[1][i] = np.max(SubArr["Time"][mask])  # Max Midpoint Binned
@@ -375,9 +417,13 @@ def Bin_Quat_Cadence(cadence, CameraData, Camera):
         # Add Cadence #
         # Quality Masks
         # print(max(mask), SubArr_Len)
+        #print(f"i/Time_Len: {i}/{Time_Len} min_ind, max_ind / source_leb {min_ind}, {max_ind} / {Source_Len}")
         max_ind = int(min_ind) + int(SubArr_Len)
-        if max_ind > Source_Len:
+        if max_ind > (Source_Len - 1):
             max_ind = Source_Len - 1
+            if(t0 > cadence[i]):
+                log.debug(f"\tAdjusting Max Ind: {max_ind}")
+
 
     if Flag_ZeroMask > 0:
         log.info(
@@ -916,10 +962,6 @@ def create_diagnostic_periodogram(Sector, Camera):
 
 
 def create_diagnostic_emi(Sector, Camera, Cadence):
-    import matplotlib as mpl
-
-    mpl.rcParams["agg.path.chunksize"] = 10000000
-
     typedict = typedict = {1: "020", 2: "120", 3: "FFI"}
     if type(Cadence) != str:
         cadence_name = typedict[Cadence]
