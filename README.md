@@ -74,8 +74,8 @@ While we have endeavoured to make these files as simple and straightforward to u
 Initial development done by [Tyler Pritchard](https://github.com/tylerapritchard), [Christina Hedges](https://github.com/christinahedges) the [TESS Science Support Center](https://heasarc.gsfc.nasa.gov/docs/tess/), and the [MIT TESS Science Operations Team](https://tess.mit.edu/). 
 
 ### TESSVectors Code Workflow
-``` mermaid
-flowchart TD
+```mermaid
+flowchart TD;
     subgraph For Each Sector
     TESSVectors_process_sector --> create_vectors_sector
     get_eng_data --> |Quaternion Data| create_vectors_sector
