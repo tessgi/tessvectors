@@ -19,6 +19,8 @@ import numpy as np
 from bs4 import BeautifulSoup
 import pandas as pd
 
+from itertools import product
+
 
 mpl.rcParams["agg.path.chunksize"] = 10000000
 
@@ -318,6 +320,10 @@ def Bin_Quat_Cadence(cadence, CameraData, Camera):
     for i in range(Time_Len - 1):
         log.debug(f"Bin_Quat_Cadence: min: {min_ind} max: {max_ind} max_len: {Time_Len} SubArr_Len: {SubArr_Len}")
         log.debug(f"i: {i} ")
+        
+        if(max_ind > (Source_Len - 1)):
+            max_ind = Source_Len - 1
+            log.debug(f"\tAdjusting Max Ind: {max_ind}")
 
         t0=CameraData["Time"][min_ind]
         t1=CameraData["Time"][max_ind]
@@ -493,8 +499,8 @@ def Bin_EMI_Cadence(cadence, EMIData, Camera, type):
     Time_Len = len(cadence)
     Source_Len = len(EMIData[1].data["Time"])
     BinnedEMI = np.zeros(
-        (6, Time_Len), dtype=np.double
-    )  # ( (Earth + Moon) ** (Distance + Elev. + Azim.)
+        (10, Time_Len), dtype=np.double
+    )  # ( (Earth + Moon) ** (Distance + Elev. + Azim.) + SC(Earth + Moon)*(Ele + Az)
     min_ind = int(0)
     max_ind = int(SubArr_Len)
 
@@ -535,6 +541,22 @@ def Bin_EMI_Cadence(cadence, EMIData, Camera, type):
             # Moon Camera Azim
             BinnedEMI[5][i] = EMIData[
                 EMI_Extension_Dict(f"emi.cam{Camera}_moon_azimuth")
+            ].data[min_ind:max_ind]["VALUE"][match_ind]
+            #Earth Elevation Above Spacecraft
+            BinnedEMI[6][i] = EMIData[
+                EMI_Extension_Dict(f"emi.earth_sc_elevation")
+            ].data[min_ind:max_ind]["VALUE"][match_ind]
+            #Earth Azimuthal orientation Spacecraft
+            BinnedEMI[7][i] = EMIData[
+                EMI_Extension_Dict(f"emi.earth_sc_azimuth")
+            ].data[min_ind:max_ind]["VALUE"][match_ind]
+            #Moon Spacecraft Elevation
+            BinnedEMI[8][i] = EMIData[
+                EMI_Extension_Dict(f"emi.moon_sc_elevation")
+            ].data[min_ind:max_ind]["VALUE"][match_ind]
+            #Moon Azimut Elevation
+            BinnedEMI[9][i] = EMIData[
+                EMI_Extension_Dict(f"emi.earth_sc_azimuth")
             ].data[min_ind:max_ind]["VALUE"][match_ind]
         else:
             log.info("Bin_EMI_Cadence can't match a datapoint")
@@ -709,6 +731,19 @@ def write_vector_sector_camera(
                 f.write(
                     f"# Moon_Camera_Azimuth: Azimuth of Moon around Camera Boresight in Degrees \n\n"
                 )
+                f.write(    
+                    f"# Earth_Spacecraft_Angle: Angle of Earth from Spacecraft Boresight in Degrees \n\n"
+                )
+                f.write(
+                    f"# Earth_Spacecraft_Azimuth: Azimuth of Earth around Spacecraft Boresight in Degrees \n\n"
+                )
+                f.write(
+                    f"# Moon_Spacecraft_Angle: Angle of Moon from Sacecraft Boresight in Degrees \n\n"
+                )
+                f.write(
+                    f"# Moon_Spacecraft_Azimuth: Azimuth of Moon around Spacecraft Boresight in Degrees \n\n"
+                )
+                
                 if i == 3:
                     f.write(
                         f"# FFIFile: The FFI file assosciated with this observing cadence\n"
@@ -743,6 +778,10 @@ def write_vector_sector_camera(
                     "Moon_Distance": EMI[3],
                     "Moon_Camera_Angle": EMI[4],
                     "Moon_Camera_Azimuth": EMI[5],
+                    "Earth_Spacecraft_Angle": EMI[6],
+                    "Earth_Spacecraft_Azimuth": EMI[7],
+                    "Moon_Spacecraft_Angle": EMI[8],
+                    "Moon_Spacecraft_Azimuth": EMI[9],
                 }
             )
             if i == 3:
@@ -756,21 +795,51 @@ def write_vector_sector_camera(
             #        ).to_csv(fname, index=False, mode = "a")
             df.to_csv(fname, index=False, mode="a")
 
-def create_vectors_sector(Sector):
+def create_vectors_sector(Sector,check_exists=True):
     """For a given sector, create TESSVectors Information and write to a CSV file"""
+    #assume that files don't exist, unless we're checking.  could rename this overwrite?
+    files_exist = False
+    cutoff_20s = 27
+    if(check_exists):
+        typedict = {1: "020", 2: "120", 3: "FFI"}
+        Camera = [1,2,3,4]
+        
+        if(Sector >= cutoff_20s):
+            i=[1,2,3]
+        else:
+            i=[2,3]
+    
+        files_exist = True
+        for item in product(i,np.atleast_1d(Camera)):
+            file_check = os.path.isfile(f"{TESSVectors_Products_Base}/Vectors/{typedict[item[0]]}_Cadence/TessVectors_S{Sector:03d}_C{item[1]}_{typedict[item[0]]}.csv")
+            files_exist = files_exist and file_check
+        
+    if(not files_exist):
+        log.info(f"Starting Sector: {Sector}")
+        QuatData = get_eng_data(Sector, 'quat')
+        EMIData = get_eng_data(Sector, 'emi')
 
-    log.info(f"Starting Sector: {Sector}")
-    QuatData = get_eng_data(Sector, 'quat')
-    EMIData = get_eng_data(Sector, 'emi')
+        for Camera in [1, 2, 3, 4]:
+            camera_files_exist = True
+            if(check_exists):
+                camera_files_exist = True
+                for item in product(i,np.atleast_1d(Camera)):
+                    camera_file_check = os.path.isfile(f"{TESSVectors_Products_Base}/Vectors/{typedict[item[0]]}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{typedict[item[0]]}.csv")
+                    camera_files_exist = camera_files_exist and camera_file_check
+            if(not camera_files_exist):
+                log.info(f"\tStarting Camera: {Camera}")
+                TimeArr, FFIList = get_camera_sector_cadences(Sector, Camera)
+                BinnedQuats = Bin_Quat_Camera(QuatData[Camera].data, TimeArr, Camera)
+                BinnedEMI = Bin_EMI_Camera(EMIData, TimeArr, Camera)
+                write_vector_sector_camera(
+                    BinnedQuats, BinnedEMI, FFIList, TimeArr, Sector, Camera
+                )
+            else:
+                log.info(f"Sector: {Sector} Camera: {Camera} files exist, skipping")
 
-    for Camera in [1, 2, 3, 4]:
-        log.info(f"\tStarting Camera: {Camera}")
-        TimeArr, FFIList = get_camera_sector_cadences(Sector, Camera)
-        BinnedQuats = Bin_Quat_Camera(QuatData[Camera].data, TimeArr, Camera)
-        BinnedEMI = Bin_EMI_Camera(EMIData, TimeArr, Camera)
-        write_vector_sector_camera(
-            BinnedQuats, BinnedEMI, FFIList, TimeArr, Sector, Camera
-        )
+    else:
+        log.info(f"Sector: {Sector} files exist, skipping")
+
 
 
 def quality_to_color(qual):
@@ -1096,7 +1165,7 @@ def TESSVectors_process_sector(Sector):
     return (Sector, True)
 
 
-def run_bulk_diagnostics(sector_min = 1, sector_max = 65, camera_min = 1, camera_max = 4, processes=7):
+def run_bulk_diagnostics(sector_min = 1, sector_max = 77, camera_min = 1, camera_max = 4, processes=7):
     sector_list = range(sector_min, sector_max)
     camera_list = range(camera_min, camera_max)
     cadence_list = range(1, 3)
@@ -1112,7 +1181,7 @@ def run_bulk_diagnostics(sector_min = 1, sector_max = 65, camera_min = 1, camera
     pool.close()
 
 
-def run_bulk_vectors(sector_min = 1, sector_max = 69, processes=7):
+def run_bulk_vectors(sector_min = 1, sector_max = 77, processes=7):
     if not processes:
         processes = 7
     sector_list = range(sector_min, sector_max)
@@ -1126,7 +1195,7 @@ def run_bulk_vectors(sector_min = 1, sector_max = 69, processes=7):
     pool.close()
 
 
-def run_bulk_processing(sector_min = 1, sector_max = 65):
+def run_bulk_processing(sector_min = 1, sector_max = 77):
     from multiprocessing.pool import Pool
     import multiprocessing as mp
 
