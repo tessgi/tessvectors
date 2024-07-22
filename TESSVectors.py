@@ -19,6 +19,7 @@ import numpy as np
 from bs4 import BeautifulSoup
 import pandas as pd
 
+from multiprocessing.pool import Pool
 from itertools import product
 
 
@@ -859,8 +860,8 @@ def plot_quat(axs, time, quat, dev, qual, QuatLabel):
     nsigma = 1
 
     # norm = np.nanmedian(np.double(quat[~np.isfinite(quat)]))
-    norm_quat = quat / norm
     norm = np.nanmedian(quat)
+    norm_quat = quat / norm
     norm_dev = dev / norm
     # mean_norm_dev = np.nanmedian(dev[~np.isfinite(dev)] / norm)
     mean_norm_dev = np.nanmedian(dev / norm)
@@ -869,15 +870,17 @@ def plot_quat(axs, time, quat, dev, qual, QuatLabel):
 
     ymin = np.nanmedian(norm_quat) - 3 * mean_norm_dev
     ymax = np.nanmedian(norm_quat) + 3 * mean_norm_dev
-
-    im = axs.imshow(
-        np.vstack((qual,)),
-        extent=(tmin, tmax, ymin, ymax),
-        interpolation="nearest",
-        aspect="auto",
-        cmap=cm.PuRd,
-        vmax=1,
-    )
+    if qual is not None:
+        im = axs.imshow(
+            np.vstack((qual,)),
+            extent=(tmin, tmax, ymin, ymax),
+            interpolation="nearest",
+            aspect="auto",
+            cmap=cm.PuRd,
+            vmax=1,
+        )
+    else:
+        im = None
 
     axs.scatter(time, norm_quat, s=3, label="Median Quaternion Value", color="k")
 
@@ -892,11 +895,11 @@ def plot_quat(axs, time, quat, dev, qual, QuatLabel):
     axs.set_xlim(tmin, tmax)
     axs.set_ylim(ymin, ymax)
 
-    axs.tick_params(axis="x", labelsize=0)
+    axs.tick_params(axis="x", labelsize=1)
 
     axs.set_ylabel(f"{QuatLabel}", weight="bold", size=24)
     axs.set_yticks([])
-
+    axs.set_rasterized(True)
     return im
 
 
@@ -912,7 +915,8 @@ def create_diagnostic_timeseries(Sector, Camera, Cadence):
     nplots = 3
     if os.path.isfile(fname):
         quatdf = pd.read_csv(fname, comment="#", index_col=False)
-        qual_im = quality_to_color(quatdf.Quality)
+        #qual_im = quality_to_color(quatdf.Quality)
+        qual_im = None
 
         fig, axs = plt.subplots(nplots, 1, figsize=(15, nplots * 10))
         im = plot_quat(
@@ -923,6 +927,7 @@ def create_diagnostic_timeseries(Sector, Camera, Cadence):
             qual_im,
             "Quaternion 1",
         )
+
         im = plot_quat(
             axs[1],
             quatdf.MidTime,
@@ -931,6 +936,7 @@ def create_diagnostic_timeseries(Sector, Camera, Cadence):
             qual_im,
             "Quaternion 2",
         )
+
         im = plot_quat(
             axs[2],
             quatdf.MidTime,
@@ -939,6 +945,7 @@ def create_diagnostic_timeseries(Sector, Camera, Cadence):
             qual_im,
             "Quaternion 3",
         )
+
         plt.subplots_adjust(hspace=0)
         axs[0].set_title(
             f"TESS Sector {Sector} Camera {Camera} Quaternions", weight="bold", size=26
@@ -946,15 +953,15 @@ def create_diagnostic_timeseries(Sector, Camera, Cadence):
         axs[-1].tick_params(axis="x", labelsize=18)
         axs[-1].set_xlabel("TESS BTJD", weight="bold", size=24)
 
-        cax = plt.axes([0.92, 0.11, 0.075, 0.77])
-        cbar = plt.colorbar(mappable=im, cax=cax, ticks=[0, 0.5, 1])
-        cbar.ax.set_yticklabels(["Unflagged", "Aggressive", "Conservative"], size=18)
-        cbar.set_label("Data Flagging Level (Lower Is Better)", size=24, weight="bold")
+        #cax = plt.axes([0.92, 0.11, 0.075, 0.77])
+        #cbar = plt.colorbar(mappable=im, cax=cax, ticks=[0, 0.5, 1])
+        #cbar.ax.set_yticklabels(["Unflagged", "Aggressive", "Conservative"], size=18)
+        #cbar.set_label("Data Flagging Level (Lower Is Better)", size=24, weight="bold")
 
         # plt.tight_layout()
-        fout = f"{TESSVectors_Products_Base}/Diagnostics/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}_Quat.png"
-        plt.show()
-        plt.savefig(fout, dpi=300, bbox_inches="tight", rasterize=True)
+        fout = f"{TESSVectors_Products_Base}/Diagnostics/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}_Quat.pdf"
+        #plt.show()
+        plt.savefig(fout, dpi=300, bbox_inches="tight")#, rasterize=True)
         plt.close(fig)
 
 
@@ -970,12 +977,16 @@ def plot_lsperiodogram(ax, time, median, std, QuatLabel):
     ax.set_xscale("log")
 
     ax.set_ylim(min(ls.power), max(ls.power))
-
     return
 
 
 def create_diagnostic_periodogram(Sector, Camera):
-    Cadence = 1
+    cutoff_20s = 27
+    if(Sector < cutoff_20s):
+        Cadence = 2
+    else:
+        Cadence = 1
+
     typedict = typedict = {1: "020", 2: "120", 3: "FFI"}
     if type(Cadence) != str:
         cadence_name = typedict[Cadence]
@@ -1025,7 +1036,7 @@ def create_diagnostic_periodogram(Sector, Camera):
         ax2.set_xlabel("Period [seconds]", weight="bold", size=24)
         ax2.tick_params(axis="x", labelsize=18)
 
-        fout = f"{TESSVectors_Products_Base}/Diagnostics/Periodograms/TessVectors_S{Sector:03d}_C{Camera}_QuatPower.png"
+        fout = f"{TESSVectors_Products_Base}/Diagnostics/Periodograms/TessVectors_S{Sector:03d}_C{Camera}_QuatPower.pdf"
         plt.savefig(fout, dpi=300, bbox_inches="tight")
         plt.close(fig)
 
@@ -1042,7 +1053,9 @@ def create_diagnostic_emi(Sector, Camera, Cadence):
     if os.path.isfile(fname):
         quatdf = pd.read_csv(fname, comment="#", index_col=False)
 
-        qual_im = quality_to_color(quatdf.Quality)
+        #qual_im = quality_to_color(quatdf.Quality)
+        qual_im = None
+        
         fig, axs = plt.subplots(nplots, 1, figsize=(15, nplots * 10))
 
         axs[0].scatter(
@@ -1060,14 +1073,15 @@ def create_diagnostic_emi(Sector, Camera, Cadence):
 
         ymin = min(min(quatdf.Earth_Distance), min(quatdf.Moon_Distance))
         ymax = max(max(quatdf.Earth_Distance), max(quatdf.Moon_Distance))
-        im = axs[0].imshow(
-            np.vstack((qual_im,)),
-            extent=(tmin, tmax, ymin, ymax),
-            interpolation="nearest",
-            aspect="auto",
-            cmap=cm.PuRd,
-            vmax=1,
-        )
+        if qual_im is not None: 
+            im = axs[0].imshow(
+                np.vstack((qual_im,)),
+                extent=(tmin, tmax, ymin, ymax),
+                interpolation="nearest",
+                aspect="auto",
+                cmap=cm.PuRd,
+                vmax=1,
+            )
 
         axs[1].scatter(
             quatdf.MidTime, quatdf.Earth_Camera_Angle, label="Earth", color="seagreen"
@@ -1084,14 +1098,16 @@ def create_diagnostic_emi(Sector, Camera, Cadence):
 
         ymin = min(min(quatdf.Earth_Camera_Angle), min(quatdf.Moon_Camera_Angle))
         ymax = max(max(quatdf.Earth_Camera_Angle), max(quatdf.Moon_Camera_Angle))
-        im = axs[1].imshow(
-            np.vstack((qual_im,)),
-            extent=(tmin, tmax, ymin, ymax),
-            interpolation="nearest",
-            aspect="auto",
-            cmap=cm.PuRd,
-            vmax=1,
-        )
+        
+        if qual_im is not None:
+            im = axs[1].imshow(
+                np.vstack((qual_im,)),
+                extent=(tmin, tmax, ymin, ymax),
+                interpolation="nearest",
+                aspect="auto",
+                cmap=cm.PuRd,
+                vmax=1,
+            )
 
         axs[2].scatter(
             quatdf.MidTime, quatdf.Earth_Camera_Azimuth, label="Earth", color="seagreen"
@@ -1108,14 +1124,16 @@ def create_diagnostic_emi(Sector, Camera, Cadence):
 
         ymin = min(min(quatdf.Earth_Camera_Azimuth), min(quatdf.Moon_Camera_Azimuth))
         ymax = max(max(quatdf.Earth_Camera_Azimuth), max(quatdf.Moon_Camera_Azimuth))
-        im = axs[2].imshow(
-            np.vstack((qual_im,)),
-            extent=(tmin, tmax, ymin, ymax),
-            interpolation="nearest",
-            aspect="auto",
-            cmap=cm.PuRd,
-            vmax=1,
-        )
+
+        if qual_im is not None:        
+            im = axs[2].imshow(
+                np.vstack((qual_im,)),
+                extent=(tmin, tmax, ymin, ymax),
+                interpolation="nearest",
+                aspect="auto",
+                cmap=cm.PuRd,
+                vmax=1,
+            )
 
         axs[0].set_ylabel("Distance", weight="bold", size=24)
         axs[1].set_ylabel("Camera {Camera} Angle", weight="bold", size=24)
@@ -1130,12 +1148,12 @@ def create_diagnostic_emi(Sector, Camera, Cadence):
         axs[2].tick_params(axis="x", labelsize=18)
         plt.subplots_adjust(hspace=0)
 
-        cax = plt.axes([0.92, 0.11, 0.075, 0.77])
-        cbar = plt.colorbar(mappable=im, cax=cax, ticks=[0, 0.5, 1])
-        cbar.ax.set_yticklabels(["Unflagged", "Aggressive", "Conservative"], size=18)
-        cbar.set_label("Data Flagging Level (Lower Is Better)", size=24, weight="bold")
+        #cax = plt.axes([0.92, 0.11, 0.075, 0.77])
+        #cbar = plt.colorbar(mappable=im, cax=cax, ticks=[0, 0.5, 1])
+        #cbar.ax.set_yticklabels(["Unflagged", "Aggressive", "Conservative"], size=18)
+        #cbar.set_label("Data Flagging Level (Lower Is Better)", size=24, weight="bold")
 
-        fout = f"{TESSVectors_Products_Base}/Diagnostics/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}_emi.png"
+        fout = f"{TESSVectors_Products_Base}/Diagnostics/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}_emi.pdf"
         plt.savefig(fout, dpi=300, bbox_inches="tight")
         # plt.show()
         plt.close(fig)
@@ -1146,11 +1164,14 @@ def create_diagnostics_sector(Sector):
     # Sector, Camera, Cadence = SectorCameraCadence
     log.info(f"Creating Diagnostics for Sector: {Sector}")
     for Camera in [1, 2, 3, 4]:
-        create_diagnostic_periodogram(Sector, Camera)
-        for Cadence in [1, 2, 3]:
-            create_diagnostic_timeseries(Sector, Camera, Cadence)
-            # Should I create the periodograms from the "raw" 2s data?  probably?
-            create_diagnostic_emi(Sector, Camera, Cadence)
+        try:
+            create_diagnostic_periodogram(Sector, Camera)
+            for Cadence in [1, 2, 3]:
+                create_diagnostic_timeseries(Sector, Camera, Cadence)
+                # Should I create the periodograms from the "raw" 2s data?  probably?
+                create_diagnostic_emi(Sector, Camera, Cadence)
+        except:
+            print(f"Sector {Sector} Diagnostics Failed")
 
 
 
@@ -1165,18 +1186,14 @@ def TESSVectors_process_sector(Sector):
     return (Sector, True)
 
 
-def run_bulk_diagnostics(sector_min = 1, sector_max = 77, camera_min = 1, camera_max = 4, processes=7):
+def run_bulk_diagnostics(sector_min = 1, sector_max = 77, processes=7):
+    if not processes:
+        processes = 7
     sector_list = range(sector_min, sector_max)
-    camera_list = range(camera_min, camera_max)
-    cadence_list = range(1, 3)
-    inlist = list(product(sector_list, camera_list, cadence_list))
-
-    from multiprocessing.pool import Pool
-    from itertools import product
 
     pool = Pool(processes=processes)
     res = []
-    for result in pool.map(create_diagnostics_bulk, inlist):
+    for result in pool.map(create_diagnostics_sector, sector_list):
         res = [res, result]
     pool.close()
 
