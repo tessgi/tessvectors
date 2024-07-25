@@ -43,6 +43,17 @@ TESSVectors_Local_ENG_Path = 'Eng'
 TESSVectors_Local_tpf_fast_path = 'SourceData/fast'
 TESSVectors_Local_tpf_short_path = 'SourceData/short/'
 TESSVectors_Local_tpf_ffi_path = 'SourceData/FFI/'
+def make_dir_structure():
+    os.makedirs(TESSVectors_Products_Base, exist_ok=True)
+    os.makedirs(TESSVectors_Products_Base+'/Vectors', exist_ok=True)
+    os.makedirs(TESSVectors_Products_Base+'/Vectors/020_Cadence', exist_ok=True)
+    os.makedirs(TESSVectors_Products_Base+'/Vectors/120_Cadence', exist_ok=True)
+    os.makedirs(TESSVectors_Products_Base+'/Vectors/FFI_Cadence', exist_ok=True)
+    os.makedirs(TESSVectors_Products_Base+'/Diagnostics', exist_ok=True)
+    os.makedirs(TESSVectors_Products_Base+'/Diagnostics/Periodograms', exist_ok=True)
+    os.makedirs(TESSVectors_Products_Base+'/Diagnostics/EMI', exist_ok=True)
+    os.makedirs(TESSVectors_Products_Base+'/Diagnostics/Vectors', exist_ok=True)
+
 
 def get_ccd_centers(Sector, Camera, CCD):
     """Given a sector/camera/ccd - return the center ra, dec for that TESS pointing
@@ -78,15 +89,29 @@ def get_times_from_mast(ra, dec, Sector, exptime):
         try:
             if exptime != "ffi":
                 # Use TESSCut for an FFI
-                results = lk.search_targetpixelfile(
-                    f"{ra} {dec}",
-                    radius=1e4,
-                    sector=Sector,
-                    mission="TESS",
-                    exptime=exptime,
-                    limit=1,
-                    author="SPOC",
-                ).download(quality_bitmask="none")
+                #results = lk.search_targetpixelfile(
+                #    f"{ra} {dec}",
+                #    radius=1e4,
+                #    sector=Sector,
+                #    mission="TESS",
+                #    exptime=exptime,
+                #    limit=1,
+                #    author="SPOC",
+                #).download(quality_bitmask="none")
+                if exptime == 'short':
+                    script_link = f'https://archive.stsci.edu/missions/tess/download_scripts/sector/tesscurl_sector_{Sector}_tp.sh'
+                if exptime == 'fast':
+                    script_link = f'https://archive.stsci.edu/missions/tess/download_scripts/sector/tesscurl_sector_{Sector}_fast-tp.sh'
+                scripts = pd.read_csv(script_link, comment='#', sep=' ', usecols=[6], names=['link'])
+                
+                cam=-1
+                i=-1
+                while cam != 1:
+                    i+=1
+                    results = lk.TessTargetPixelFile(scripts['link'].values[i],
+                                                     quality_bitmask="none")
+                    cam = results.hdu[0].header["CCD"]
+
             else:
                 results = lk.search_tesscut(f"{ra} {dec}", sector=Sector).download(
                     cutout_size=(1, 1), quality_bitmask="none"
@@ -172,7 +197,11 @@ def get_timing_midpoints_tpf(
                 timing_ccd = results.time.value[nonzero_mask] - timing_corr
                 ffi_list = []
                 if exptime == "ffi":
+                    #We're essentially grabbing a random tesscut tpf to use for FFI indexing
+                    #Here we swap our random camera with the '{camera}' string and add the extension
+                    #for a calibrated ffi
                     ffi_list = hdu[1].data["FFI_FILE"][nonzero_mask]
+                    ffi_list = [f[0:-18]+'{camera}'+f[-17:]+'c.fits' for f in ffi_list]
 
 
             if len(timing_benchmark) == 0:
@@ -644,7 +673,8 @@ def write_vector_sector_camera(
     ):
         from datetime import date
 
-        fname = f"{TESSVectors_Products_Base}/Vectors/{typedict[i]}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{typedict[i]}.csv"
+        fname_root = f"{TESSVectors_Products_Base}/Vectors/{typedict[i]}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{typedict[i]}"
+        fname = fname_root+".xz"
         log.info(
             f"\t\tWriting Sector: {Sector} Camera: {Camera} Cadence {typedict[i]} to:"
         )
@@ -747,7 +777,7 @@ def write_vector_sector_camera(
                 
                 if i == 3:
                     f.write(
-                        f"# FFIFile: The FFI file assosciated with this observing cadence\n"
+                        f"# FFI_File: The FFI file assosciated with this observing cadence\n"
                     )
                 f.write(f"# Processing Date-Time: {date.today()}\n\n")
             df = pd.DataFrame(
@@ -794,7 +824,10 @@ def write_vector_sector_camera(
             #           #'Quat_MIN_NUM_GSUSED':int,
             #           #'Quat_NBinned': int}
             #        ).to_csv(fname, index=False, mode = "a")
-            df.to_csv(fname, index=False, mode="a")
+            df.to_csv(fname, index=False, mode="a", compression=None)
+            
+            df=pd.read_csv(fname, comment="#", index_col=False,compression=None)
+            df.to_csv(fname, index=False, mode="w", compression='xz')
 
 def create_vectors_sector(Sector,check_exists=True):
     """For a given sector, create TESSVectors Information and write to a CSV file"""
@@ -882,7 +915,7 @@ def plot_quat(axs, time, quat, dev, qual, QuatLabel):
     else:
         im = None
 
-    axs.scatter(time, norm_quat, s=3, label="Median Quaternion Value", color="k")
+    axs.scatter(time, norm_quat, s=3, label="Median Quaternion Value", color="k", rasterized=True)
 
     axs.fill_between(
         time,
@@ -890,6 +923,7 @@ def plot_quat(axs, time, quat, dev, qual, QuatLabel):
         norm_quat + (nsigma * norm_dev),
         alpha=0.6,
         color="grey",
+        rasterized=True,
     )
 
     axs.set_xlim(tmin, tmax)
@@ -910,11 +944,10 @@ def create_diagnostic_timeseries(Sector, Camera, Cadence):
         cadence_name = typedict[Cadence]
     else:
         cadence_name = Cadence
-    fname = f"{TESSVectors_Products_Base}/Vectors/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}.csv"
-
+    fname = f"{TESSVectors_Products_Base}/Vectors/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}.xz"
     nplots = 3
     if os.path.isfile(fname):
-        quatdf = pd.read_csv(fname, comment="#", index_col=False)
+        quatdf = pd.read_csv(fname, comment="#", index_col=False, compression='xz')
         #qual_im = quality_to_color(quatdf.Quality)
         qual_im = None
 
@@ -959,16 +992,17 @@ def create_diagnostic_timeseries(Sector, Camera, Cadence):
         #cbar.set_label("Data Flagging Level (Lower Is Better)", size=24, weight="bold")
 
         # plt.tight_layout()
-        fout = f"{TESSVectors_Products_Base}/Diagnostics/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}_Quat.pdf"
+        fout = f"{TESSVectors_Products_Base}/Diagnostics/Vectors/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}_Quat.pdf"
         #plt.show()
-        plt.savefig(fout, dpi=300, bbox_inches="tight")#, rasterize=True)
+        plt.savefig(fout, dpi=100, bbox_inches="tight")#, rasterize=True)
+        plt.show()
         plt.close(fig)
 
 
 def plot_lsperiodogram(ax, time, median, std, QuatLabel):
     lc = lk.LightCurve(data={"time": time, "flux": std})
     ls = lc.to_periodogram(maximum_period=13.5)
-    ls.plot(ax=ax, lw=0.1, color="k", ylabel=" ")
+    ls.plot(ax=ax, lw=0.1, color="k", ylabel=" ", rasterized=True)
 
     ax.set_ylabel(f"{QuatLabel} Power", weight="bold", size=24)
     # ax.set_yticks([])
@@ -993,11 +1027,11 @@ def create_diagnostic_periodogram(Sector, Camera):
     else:
         cadence_name = Cadence
     Binned_Dir = "TESSVectors_products"
-    fname = f"{TESSVectors_Products_Base}/Vectors/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}.csv"
+    fname = f"{TESSVectors_Products_Base}/Vectors/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}.xz"
 
     nplots = 3
     if os.path.isfile(fname):
-        quatdf = pd.read_csv(fname, comment="#", index_col=False)
+        quatdf = pd.read_csv(fname, comment="#", index_col=False, compression='xz')
         fig, axs = plt.subplots(nplots, 1, figsize=(15, nplots * 10))
         plot_lsperiodogram(
             axs[0],
@@ -1047,11 +1081,11 @@ def create_diagnostic_emi(Sector, Camera, Cadence):
         cadence_name = typedict[Cadence]
     else:
         cadence_name = Cadence
-    fname = f"{TESSVectors_Products_Base}/Vectors/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}.csv"
+    fname = f"{TESSVectors_Products_Base}/Vectors/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}.xz"
 
     nplots = 3
-    if os.path.isfile(fname):
-        quatdf = pd.read_csv(fname, comment="#", index_col=False)
+    if (os.path.isfile(fname) and cadence_name == "FFI"):
+        quatdf = pd.read_csv(fname, comment="#", index_col=False, compression='xz')
 
         #qual_im = quality_to_color(quatdf.Quality)
         qual_im = None
@@ -1153,7 +1187,7 @@ def create_diagnostic_emi(Sector, Camera, Cadence):
         #cbar.ax.set_yticklabels(["Unflagged", "Aggressive", "Conservative"], size=18)
         #cbar.set_label("Data Flagging Level (Lower Is Better)", size=24, weight="bold")
 
-        fout = f"{TESSVectors_Products_Base}/Diagnostics/{cadence_name}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{cadence_name}_emi.pdf"
+        fout = f"{TESSVectors_Products_Base}/Diagnostics/EMI/TessVectors_S{Sector:03d}_C{Camera}_emi.pdf"
         plt.savefig(fout, dpi=300, bbox_inches="tight")
         # plt.show()
         plt.close(fig)
@@ -1220,6 +1254,6 @@ def run_bulk_processing(sector_min = 1, sector_max = 77):
 
     pool = Pool(processes=mp.cpu_count())
     res = []
-    for result in pool.map(TESSVectors_process_sector, sector_list):
+    for result in pool.map(TESSVectors_process_sector, sector_list, chunksize=1):
         res = [res, result]
     pool.close()
