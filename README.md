@@ -12,8 +12,8 @@ The TESS-Vectors repository is an effort to take TESS mission engineering produc
 The information contained inside of these files is:
 
     - Cadence #: Cadence index from the source tpf
-    - MidTime: The exposure midpoint in spacecraft time (i.e. tpf.time - tpf.timecorr)
-    - TimeCorr: The Time Correction for spacecraft to Barycentric time at that cadence
+    - MidTime: The exposure midpoint in spacecraft time without barycentric correction (i.e. tpf.time - tpf.timecorr)
+        - This has been benchmarked to CCD1.  Due to staggered read, other CCDs midpoints might differ by up to ~1s
     - ExpTime: The final cadence binning (20s/120s/FFI)
     - Sector: The TESS observing Sector for the source data
     - Camera: The TESS camera for the source data
@@ -83,8 +83,6 @@ While we have endeavoured to make these files as simple and straightforward to u
 Initial development done by [Tyler Pritchard](https://github.com/tylerapritchard), [Christina Hedges](https://github.com/christinahedges) the [TESS Science Support Center](https://heasarc.gsfc.nasa.gov/docs/tess/), and the [MIT TESS Science Operations Team](https://tess.mit.edu/). 
 
 ### TESSVectors Code Workflow
-[![TESSVectors CodeFlow](https://mermaid.ink/img/pako:eNqVVc1u3CAQfhWLkyNlX2APPbTrSJG6yrYb9VJXiMVjG9WABbhpleTdOwZnIdl14vWJn_l-ZsDDI-G6ArImdacfeMuMy75-L1WGnx0OjWF9m91okxWMt9keuNMm7N4X-_0PP7e0N5qDtdT6ebZafcq4AeaA_pkibIJswFFQDa2YYz726duAsUYJrbINLj5dhi7QdLvaakTfqlq_iz7N6QuTYFjk5n4-gXBWgcLcPsppnt3jE3peUQ4K0w2c85IR44QUmLEUVa-Fcpa6vl4KRizYnxMLWFobLalk1oWIlw_9xphOc9b9Oiqck4_mDliU3wG4EGGhkVgB2rEDdAswoKq0yJ-FouOFoeHk3juZRaeS8PlVT_hGJDESQcX2doGHhQ4C2WsDUSDEjfPirwNl8U-hG8Hdm9CEc_IaJmeteeyDEceNeIei5CL_8yRe425w_eDyPOkY2Y3o4OrqpKzJcN7ztFMJ1ihtneBLDjymNJtM9kr4lP68eLj6YMR0_-_u8zzpZ1OzjDG7TruXzC-VAimCRpHnSdcLZGPvM5K5UTUVOf4-l6r1aFhXGoslg-ouz3fJ2onIcUiuCdZbMlHhw_I4LpfEtSChJGscKhicYV1JSvWMoWxwev9PcbJ2ZoBrMvTY22GDRlCFrGvWWVyFSqDVbXis_Jv1_B8Gb1TW?type=png)]
-
 ```mermaid
 flowchart LR
     subgraph For Each Sector
