@@ -661,6 +661,105 @@ def get_segment_label(times, break_times):
        raise RuntimeWarning("get_segment_label warning: Not all times have a segment label")
 
     return segment_labels
+def write_file_header(fname, Sector, Camera,i):
+    typedict = {1: "020", 2: "120", 3: "FFI"}  
+    from datetime import date
+
+    with open(fname, "w") as f:
+
+        f.write(f"# TESS Quaternions downsampled to end-user cadences\n")
+        f.write(f"# Sector: \t{Sector}\n")
+        f.write(f"# Camera: \t{Camera}\n")
+        f.write(f"# Cadence:\t{typedict[i]}\n")
+        f.write(
+            f"# This file contains TESS quaternions that have been downsampled from the TESS\n"
+        )
+        f.write(
+            f"# native 2-second exposures to the end-user product cadence (e.g .20s/120s/FFI)\n"
+        )
+        f.write(f"# For more information See:\n")
+        f.write(
+            f"#     - The github repo that created this file at https://github.com/tylerapritchard/TESSQuats\n"
+        )  # This will presumably move to tessgi at some point
+        f.write(
+            f"#     - The TESS Instrument Handbook at https://archive.stsci.edu/missions-and-data/tess\n"
+        )
+        f.write(
+            f"#     - The original quaternion engineering files at https://archive.stsci.edu/missions-and-data/tess/data-products\n"
+        )
+        f.write(
+            f"# Please check the TESS Sector Data Release Notes at https://archive.stsci.edu/tess/tess_drn.html\n"
+        )
+        f.write(
+            f"# for information regarding the telescope pointing and tracking (in addition to other image quality information) as\n"
+        )
+        f.write(
+            f"# for some sectors/cameras alternative camera quaternions are substituted for a variety of programattic reasons.\n\n"
+        )
+        f.write(f"# Column Descriptions:\n")
+        f.write(f"# Cadence #: Cadence index from the source tpf\n")
+        f.write(
+            f"# MidTime: The CCD1 exposure midpoint in spacecraft time (e.g. 'TIME' - 'TIMECORR from a SPOC TPF)'. Other CCDs will have small (~0.2-1)s offsets from this due this due to sequential reads.\n"
+        )
+        f.write(
+            f"# Quat_Start: The timestamp of the earliest quaternion used in the bin\n"
+        )
+        f.write(
+            f"# Quat_Stop: The timestamp of the last quaternion used in the bin\n"
+        )
+        f.write(
+            f"# Quat_MIN_FOM: The worst Figure of Merit from the source quaternions\n"
+        )
+        f.write(
+            f"# Quat_MIN_NUM_GSUSED: The lowest number of guide stars used in the source quaternions\n"
+        )
+        f.write(
+            f"# Quat_NBinned: The number of quaternions binned into this final result.\n"
+        )
+        f.write(
+            f"# Quat[1-4]_Med: The Quaternion #[1-4] median value from the binned values \n"
+        )
+        f.write(
+            f"# Quat[1-4]_StdDev: The standard deviation of Quaternion #[1-4] binned values\n"
+        )
+        f.write(
+            f"# Quat[1-4]_SigClip: The Sigma-Clipped Standard Deviation of Quaternion #[1-4] binned values\n"
+        )
+        f.write(
+            f"# Quat[1-4]_CRM_Med: The Quaternion #[1-4] median value with the highest and lowest values excluded \n\n"
+        )
+        f.write(f"# Earth_Distance: Distance to Earth in Earth Radii \n\n")
+        f.write(
+            f"# Earth_Camera_Angle: Angle of Earth from Camera Boresight in Degrees \n\n"
+        )
+        f.write(
+            f"# Earth_Camera_Azimuth: Azimuth of Earth around Camera Boresight in Degrees \n\n"
+        )
+        f.write(f"# Moon_Distance: Distance to Moon in Earth Radii \n\n")
+        f.write(
+            f"# Moon_Camera_Angle: Angle of Moon from Camera Boresight in Degrees \n\n"
+        )
+        f.write(
+            f"# Moon_Camera_Azimuth: Azimuth of Moon around Camera Boresight in Degrees \n\n"
+        )
+        f.write(    
+            f"# Earth_Spacecraft_Angle: Angle of Earth from Spacecraft Boresight in Degrees \n\n"
+        )
+        f.write(
+            f"# Earth_Spacecraft_Azimuth: Azimuth of Earth around Spacecraft Boresight in Degrees \n\n"
+        )
+        f.write(
+            f"# Moon_Spacecraft_Angle: Angle of Moon from Sacecraft Boresight in Degrees \n\n"
+        )
+        f.write(
+            f"# Moon_Spacecraft_Azimuth: Azimuth of Moon around Spacecraft Boresight in Degrees \n\n"
+        )
+        
+        if i == 3:
+            f.write(
+                f"# FFI_File: The FFI file assosciated with this observing cadence\n"
+            )
+        f.write(f"# Processing Date-Time: {date.today()}\n\n")
 
 def write_vector_sector_camera(
     BinnedQuats, BinnedEMI, FFIList, TimeArr, Sector, Camera
@@ -716,10 +815,7 @@ def write_vector_sector_camera(
                 f.write(f"# Column Descriptions:\n")
                 f.write(f"# Cadence #: Cadence index from the source tpf\n")
                 f.write(
-                    f"# MidTime: The exposure midpoint in spacecraft corrected time (i.e. tpf.time)\n"
-                )
-                f.write(
-                    f"# TimeCorr: The Time Correction for spacecraft to Barycentric time at that cadence\n"
+                    f"# MidTime: The CCD1 exposure midpoint in spacecraft time (e.g. 'TIME' - 'TIMECORR from a SPOC TPF)'. Other CCDs will have small (~0.2-1)s offsets from this due this due to sequential reads.\n"
                 )
                 f.write(
                     f"# Quat_Start: The timestamp of the earliest quaternion used in the bin\n"
@@ -783,8 +879,7 @@ def write_vector_sector_camera(
             df = pd.DataFrame(
                 data={
                     "Cadence": Time[2],
-                    "MidTime": Time[0] + Time[1],
-                    "TimeCorr": Time[1],
+                    "MidTime": Time[0],
                     "Segment": Time[4],
                     "Quat_Start": Quat[0],
                     "Quat_Stop": Quat[1],
@@ -845,7 +940,7 @@ def create_vectors_sector(Sector,check_exists=True):
     
         files_exist = True
         for item in product(i,np.atleast_1d(Camera)):
-            file_check = os.path.isfile(f"{TESSVectors_Products_Base}/Vectors/{typedict[item[0]]}_Cadence/TessVectors_S{Sector:03d}_C{item[1]}_{typedict[item[0]]}.csv")
+            file_check = os.path.isfile(f"{TESSVectors_Products_Base}/Vectors/{typedict[item[0]]}_Cadence/TessVectors_S{Sector:03d}_C{item[1]}_{typedict[item[0]]}.xz")
             files_exist = files_exist and file_check
         
     if(not files_exist):
@@ -858,7 +953,7 @@ def create_vectors_sector(Sector,check_exists=True):
             if(check_exists):
                 camera_files_exist = True
                 for item in product(i,np.atleast_1d(Camera)):
-                    camera_file_check = os.path.isfile(f"{TESSVectors_Products_Base}/Vectors/{typedict[item[0]]}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{typedict[item[0]]}.csv")
+                    camera_file_check = os.path.isfile(f"{TESSVectors_Products_Base}/Vectors/{typedict[item[0]]}_Cadence/TessVectors_S{Sector:03d}_C{Camera}_{typedict[item[0]]}.xz")
                     camera_files_exist = camera_files_exist and camera_file_check
             if(not camera_files_exist):
                 log.info(f"\tStarting Camera: {Camera}")
@@ -1232,7 +1327,7 @@ def run_bulk_diagnostics(sector_min = 1, sector_max = 77, processes=7):
     pool.close()
 
 
-def run_bulk_vectors(sector_min = 1, sector_max = 77, processes=7):
+def run_bulk_vectors(sector_min = 1, sector_max = 78, processes=4):
     if not processes:
         processes = 7
     sector_list = range(sector_min, sector_max)
@@ -1241,7 +1336,7 @@ def run_bulk_vectors(sector_min = 1, sector_max = 77, processes=7):
 
     pool = Pool(processes=processes)
     res = []
-    for result in pool.map(create_vectors_sector, sector_list):
+    for result in pool.imap_unordered(create_vectors_sector, sector_list, chunksize=1):
         res = [res, result]
     pool.close()
 
@@ -1254,6 +1349,6 @@ def run_bulk_processing(sector_min = 1, sector_max = 77):
 
     pool = Pool(processes=mp.cpu_count())
     res = []
-    for result in pool.map(TESSVectors_process_sector, sector_list, chunksize=1):
+    for result in pool.imap_unordered(TESSVectors_process_sector, sector_list, chunksize=1):
         res = [res, result]
     pool.close()
