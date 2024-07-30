@@ -908,7 +908,7 @@ class makevectors(object):
             files_exist = True
             for item in product(i, np.atleast_1d(Camera)):
                 file_check = os.path.isfile(
-                    self._vector_file(self.typedict[item[0]], Sector, item[1])
+                    self._vector_file(self.typedict[item[0]], Sector, item[1])+'.xz'
                 )
                 files_exist = files_exist and file_check
 
@@ -923,7 +923,7 @@ class makevectors(object):
                     camera_files_exist = True
                     for item in product(i, np.atleast_1d(Camera)):
                         camera_file_check = os.path.isfile(
-                            self._vector_file(self.typedict[item[0]], Sector, item[1])
+                            self._vector_file(self.typedict[item[0]], Sector, item[1])+'.xz'
                         )
 
                         camera_files_exist = camera_files_exist and camera_file_check
