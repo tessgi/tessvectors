@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "tessvectors"
+version = "1.0.0"
+description = "A helpful little package create and access reprocessed TESS engineering data"
+authors = ["TESS Science Support Center <tesshelp@bigbang.gsfc.nasa.gov>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">3.10,<4.0"
+astropy = "^6.1.2"
+matplotlib = "^3.9.1"
+bs4 = "^0.0.2"
+pandas = "^2.2.2"
+numpy = "<2.0.0"
+jupyterlab = "^4.2.4"
+ipython = "^8.26.0"
+ruff = "^0.5.5"
+requests = "^2.32.3"
+pytest = "^8.3.2"
+lightkurve = {git = "https://github.com/lightkurve/lightkurve.git"}
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
