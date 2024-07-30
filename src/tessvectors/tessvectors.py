@@ -65,13 +65,12 @@ def getvector(arg, Cadence=None, Sector=None, Camera=None, download=False):
     vector = pd.read_csv(fname, comment="#", index_col=False)
 
     if download:
-        print(makevectors)
-        output_file = makevectors.makevectors()._vector_base_file(
+        output_file = makevectors()._vector_base_file(
             Cadence, Sector, Camera
         )
         # lets assume people want uncompressed csv files by default
         output_file = f"{output_file}.csv"
-        makevectors.makevectors().write_file_header(
+        makevectors().write_file_header(
             output_file, Sector, Camera, Cadence
         )
         vector.to_csv(output_file, mode="a", compression=None)
