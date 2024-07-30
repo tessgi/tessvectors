@@ -6,9 +6,11 @@ import sys
 from multiprocessing.pool import Pool
 import multiprocessing as mp
 
-from .processing import processing
-from .diagnostics import diagnostics
+from .processing.makevectors import makevectors
+from .processing.diagnostics import *  # diagnostics
 
+# import processing.makevectors as makevectors
+# import processing.diagnostics as diagnostics
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 log = logging.getLogger("tessvectors")
 log.setLevel(logging.INFO)
@@ -38,7 +40,7 @@ def _resolve_remote_file(Cadence, Sector, Camera):
     return fname
 
 
-def vector(arg, Cadence=None, Sector=None, Camera=None, download=False):
+def getvector(arg, Cadence=None, Sector=None, Camera=None, download=False):
     if isinstance(arg, tuple):
         # Assume a tupe is a set of Cadence/Sector/Camera
         if len(arg) == 3:
@@ -63,10 +65,15 @@ def vector(arg, Cadence=None, Sector=None, Camera=None, download=False):
     vector = pd.read_csv(fname, comment="#", index_col=False)
 
     if download:
-        output_file = processing()._vector_base_file(Cadence, Sector, Camera)
+        print(makevectors)
+        output_file = makevectors.makevectors()._vector_base_file(
+            Cadence, Sector, Camera
+        )
         # lets assume people want uncompressed csv files by default
         output_file = f"{output_file}.csv"
-        processing().write_file_header(output_file, Sector, Camera, Cadence)
+        makevectors.makevectors().write_file_header(
+            output_file, Sector, Camera, Cadence
+        )
         vector.to_csv(output_file, mode="a", compression=None)
 
     return vector
@@ -75,7 +82,7 @@ def vector(arg, Cadence=None, Sector=None, Camera=None, download=False):
 ### Multiprocessing & convenience functions
 def process_sector(Sector):
     try:
-        processing().create_vectors_sector(Sector)
+        makevectors().create_vectors_sector(Sector)
     except:
         log.warning(
             f"\t\t\t Warning, Creating Vector for Sector: {Sector} Failed!"
@@ -89,20 +96,20 @@ def process_sector(Sector):
     return (Sector, True)
 
 
-def run_bulk_vectors(sector_min=1, sector_max=78, processes=4):
+def run_bulk_vectors(sector_min=1, sector_max=78, processes=7):
     if not processes:
         processes = 7
     sector_list = range(sector_min, sector_max)
     pool = Pool(processes=processes)
     res = []
     for result in pool.imap_unordered(
-        processing().create_vectors_sector, sector_list, chunksize=1
+        makevectors().create_vectors_sector, sector_list, chunksize=1
     ):
         res = [res, result]
     pool.close()
 
 
-def run_bulk_processing(sector_min=1, sector_max=77):
+def run_bulk_processing(sector_min=1, sector_max=78):
     sector_list = range(sector_min, sector_max)
     pool = Pool(processes=mp.cpu_count())
     res = []

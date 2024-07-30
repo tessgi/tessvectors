@@ -20,7 +20,7 @@ import pandas as pd
 import lightkurve as lk
 from lightkurve import TessQualityFlags
 
-from .processing import processing
+from . import makevectors
 
 mpl.rcParams["agg.path.chunksize"] = 10000000
 
@@ -49,7 +49,7 @@ class diagnostics(object):
         self.check_exists = check_exists
         self.typedict = {1: "020", 2: "120", 3: "FFI"}
         self.vector_extenstion = ".xz"
-        processing().make_dir_structure()
+        makevectors().make_dir_structure()
 
     def create_diagnostics_sector(self, Sector):
         # CameraCadence
@@ -146,7 +146,7 @@ class diagnostics(object):
             cadence_name = Cadence
 
         fname = (
-            processing()._vector_file(cadence_name, Sector, Camera)
+            makevectors()._vector_file(cadence_name, Sector, Camera)
             + self.vector_extenstion
         )
 
@@ -233,7 +233,7 @@ class diagnostics(object):
         else:
             cadence_name = Cadence
         fname = (
-            processing()._vector_file(cadence_name, Sector, Camera)
+            makevectors()._vector_file(cadence_name, Sector, Camera)
             + self.vector_extenstion
         )
 
@@ -294,7 +294,7 @@ class diagnostics(object):
             cadence_name = Cadence
 
         fname = (
-            processing()._vector_file(cadence_name, Sector, Camera)
+            makevectors()._vector_file(cadence_name, Sector, Camera)
             + self.vector_extenstion
         )
 

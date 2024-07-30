@@ -22,6 +22,8 @@ import pandas as pd
 from itertools import product
 from datetime import date
 
+from copy import deepcopy
+
 mpl.rcParams["agg.path.chunksize"] = 10000000
 
 import lightkurve as lk
@@ -35,7 +37,7 @@ log.setLevel(logging.INFO)
 # log.setLevel(logging.DEBUG)
 
 
-class processing(object):
+class makevectors(object):
     def __init__(
         self,
         TESSVectors_Products_Base="Products",
@@ -238,7 +240,7 @@ class processing(object):
                         # for a calibrated ffi
                         ffi_list = hdu[1].data["FFI_FILE"][nonzero_mask]
                         ffi_list = [
-                            f[0:-18] + "{camera}" + f[-17:] + "c.fits" for f in ffi_list
+                            f[0:-12] + "{ccd}" + f[-11:] + "c.fits" for f in ffi_list
                         ]
 
                 if len(timing_benchmark) == 0:
@@ -795,28 +797,28 @@ class processing(object):
             f.write(
                 f"# Quat[1-4]_CRM_Med: The Quaternion #[1-4] median value with the highest and lowest values excluded \n\n"
             )
-            f.write(f"# Earth_Distance: Distance to Earth in Earth Radii \n\n")
+            f.write(f"# Earth_Distance: Distance to Earth in Earth Radii \n")
             f.write(
-                f"# Earth_Camera_Angle: Angle of Earth from Camera Boresight in Degrees \n\n"
+                f"# Earth_Camera_Angle: Angle of Earth from Camera Boresight in Degrees \n"
             )
             f.write(
-                f"# Earth_Camera_Azimuth: Azimuth of Earth around Camera Boresight in Degrees \n\n"
+                f"# Earth_Camera_Azimuth: Azimuth of Earth around Camera Boresight in Degrees \n"
             )
-            f.write(f"# Moon_Distance: Distance to Moon in Earth Radii \n\n")
+            f.write(f"# Moon_Distance: Distance to Moon in Earth Radii \n")
             f.write(
-                f"# Moon_Camera_Angle: Angle of Moon from Camera Boresight in Degrees \n\n"
-            )
-            f.write(
-                f"# Moon_Camera_Azimuth: Azimuth of Moon around Camera Boresight in Degrees \n\n"
+                f"# Moon_Camera_Angle: Angle of Moon from Camera Boresight in Degrees \n"
             )
             f.write(
-                f"# Earth_Spacecraft_Angle: Angle of Earth from Spacecraft Boresight in Degrees \n\n"
+                f"# Moon_Camera_Azimuth: Azimuth of Moon around Camera Boresight in Degrees \n"
             )
             f.write(
-                f"# Earth_Spacecraft_Azimuth: Azimuth of Earth around Spacecraft Boresight in Degrees \n\n"
+                f"# Earth_Spacecraft_Angle: Angle of Earth from Spacecraft Boresight in Degrees \n"
             )
             f.write(
-                f"# Moon_Spacecraft_Angle: Angle of Moon from Sacecraft Boresight in Degrees \n\n"
+                f"# Earth_Spacecraft_Azimuth: Azimuth of Earth around Spacecraft Boresight in Degrees \n"
+            )
+            f.write(
+                f"# Moon_Spacecraft_Angle: Angle of Moon from Sacecraft Boresight in Degrees \n"
             )
             f.write(
                 f"# Moon_Spacecraft_Azimuth: Azimuth of Moon around Spacecraft Boresight in Degrees \n\n"
@@ -940,20 +942,3 @@ class processing(object):
 
         else:
             log.info(f"Sector: {Sector} files exist, skipping")
-
-    def process_sector(self, Sector):
-        from .diagnostics import diagnostics
-
-        try:
-            self.create_vectors_sector(Sector)
-        except:
-            log.warning("\t\t\t Warning, Creating Vector Failed!")  # add a real warning
-            pass
-
-        try:
-            diagnostics().create_diagnostics_sector(Sector)
-        except:
-            log.warning("\t\t\t Warning, Plotting Failed!")  # add a real warning
-            pass
-
-        return (Sector, True)
