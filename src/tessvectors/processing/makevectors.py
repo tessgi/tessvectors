@@ -56,8 +56,6 @@ class makevectors(object):
         self.TESSVectors_Local_tpf_ffi_path = TESSVectors_Local_tpf_ffi_path
         self.check_exists = check_exists
 
-        self.make_dir_structure()
-
         self.typedict = {1: "020", 2: "120", 3: "FFI"}
 
     def make_dir_structure(self):
@@ -736,19 +734,19 @@ class makevectors(object):
 
     def write_file_header(self, fname, Sector, Camera, Cadence):
         with open(fname, "w") as f:
-            f.write(f"# TESS Quaternions downsampled to end-user cadences\n")
+            f.write(f"# TESSVector: TESS Engineering Data downsampled to end-user cadences\n")
             f.write(f"# Sector: \t{Sector}\n")
             f.write(f"# Camera: \t{Camera}\n")
             f.write(f"# Cadence:\t{Cadence}\n")
             f.write(
-                f"# This file contains TESS quaternions that have been downsampled from the TESS\n"
+                f"# This file contains TESS quaternions and other engineering products that have been re-sampled from the TESS\n"
             )
             f.write(
-                f"# native 2-second exposures to the end-user product cadence (e.g .20s/120s/FFI)\n"
+                f"# native exposures to the end-user product cadence (e.g .20s/120s/FFI)\n"
             )
             f.write(f"# For more information See:\n")
             f.write(
-                f"#     - The github repo that created this file at https://github.com/tylerapritchard/TESSQuats\n"
+                f"#     - The github repo that created this file at https://github.com/tylerapritchard/tessvectors\n"
             )  # This will presumably move to tessgi at some point
             f.write(
                 f"#     - The TESS Instrument Handbook at https://archive.stsci.edu/missions-and-data/tess\n"
@@ -768,7 +766,9 @@ class makevectors(object):
             f.write(f"# Column Descriptions:\n")
             f.write(f"# Cadence #: Cadence index from the source tpf\n")
             f.write(
-                f"# MidTime: The CCD1 exposure midpoint in spacecraft time (e.g. 'TIME' - 'TIMECORR from a SPOC TPF)'. Other CCDs will have small (~0.2-1)s offsets from this due this due to sequential reads.\n"
+                f"# MidTime: The CCD1 exposure midpoint in spacecraft time (e.g. 'TIME' - 'TIMECORR from a SPOC TPF)'. \n"
+            )
+            f.write(f"     - Other CCDs will have small (~0.2-1)s offsets from this due this due to sequential reads.\n"
             )
             f.write(
                 f"# Quat_Start: The timestamp of the earliest quaternion used in the bin\n"
@@ -846,9 +846,11 @@ class makevectors(object):
             log.info(f"\t\t\t to {fname}")
 
             if Time is not None:
+                # Make the directory Structure if it does not exist
+                self.make_dir_structure()
+                
                 # First write the File Header
                 # this will over-write by default
-
                 self.write_file_header(fname, Sector, Camera, self.typedict[i])
                 df = pd.DataFrame(
                     data={

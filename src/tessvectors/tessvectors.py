@@ -6,11 +6,9 @@ import sys
 from multiprocessing.pool import Pool
 import multiprocessing as mp
 
+import numpy as np
 from .processing.makevectors import makevectors
-from .processing.diagnostics import *  # diagnostics
-
-# import processing.makevectors as makevectors
-# import processing.diagnostics as diagnostics
+from .processing.diagnostics import diagnostics
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 log = logging.getLogger("tessvectors")
 log.setLevel(logging.INFO)
@@ -32,7 +30,7 @@ def _get_Cadence_Sector_Camera(hdu):
 
 def _resolve_remote_file(Cadence, Sector, Camera):
     remote_base = (
-        "https://github.com/tylerapritchard/TESSVectors/raw/main/Products/Vectors/"
+        "https://heasarc.gsfc.nasa.gov/docs/tess/data/TESSVectors/Vectors/"
     )
     cadence_folder = f"{Cadence}_Cadence/"
     file_base = f"TessVectors_S{Sector:03d}_C{Camera}_{Cadence}.xz"
@@ -70,6 +68,7 @@ def getvector(arg, Cadence=None, Sector=None, Camera=None, download=False):
         )
         # lets assume people want uncompressed csv files by default
         output_file = f"{output_file}.csv"
+        logging.info(f"Writing TESSVector to: {fname}")
         makevectors().write_file_header(
             output_file, Sector, Camera, Cadence
         )
@@ -77,6 +76,33 @@ def getvector(arg, Cadence=None, Sector=None, Camera=None, download=False):
 
     return vector
 
+_mast_uri_base = f"https://mast.stsci.edu/api/v0.1/Download/file/?uri=mast:TESS/product/"
+
+def getffi(arg, download=False):
+    if isinstance(arg, tuple):
+        if len(arg) == 4:
+            midtime = arg[0]
+            sector = arg[1]
+            camera = arg[2]
+            ccd = arg[3]
+    ffi_vector = getvector(('FFI',sector,camera))
+    closest_ind = np.argmin(abs(midtime - ffi_vector.MidTime))
+    ffi_name = ffi_vector.iloc[closest_ind].FFIFile
+    ffi_name = f"{ffi_name.split('{')[0]}{ccd}{ffi_name.split('}')[1]}"
+    ffi_file = f"{_mast_uri_base}{ffi_name}"
+    if(download):
+        #download this file.  wget?  lksearch? hdu>? 
+        raise NotImplementedError
+    return ffi_file
+
+#
+def decompress(filein, fileout):
+    import lzma
+    with lzma.open(filein, mode="rb") as f:
+        data = f.read()
+    with open(fileout, 'wb'):
+        f.write(data)
+    return data
 
 ### Multiprocessing & convenience functions
 def process_sector(Sector):
