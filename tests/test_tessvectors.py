@@ -26,6 +26,7 @@ def test_getvector():
     df = tessvectors.getvector(("FFI", 1, 4), download=True)
     assert os.path.isfile(makevectors()._vector_base_file("FFI", 1, 4) + ".csv")
 
+
 def test_getffi():
-    ffi_loc = tessvectors.getffi((1337.370729227238,1,4,1))
+    ffi_loc = tessvectors.getffi((1337.370729227238, 1, 4, 1))
     assert isinstance(ffi_loc, str)

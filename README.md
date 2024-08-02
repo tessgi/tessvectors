@@ -73,7 +73,10 @@ While we have endeavoured to make these files as simple and straightforward to u
 
     - MidTime: tessvectors data products are created on a per-camera basis as that is the referance frame for the engineering files, however the CCD readouts can have small variations (<1s between CCD's 1-4) and so may not line up exactly with these values.  The cadence numbers should align with cadence numbers from mission TPFs and can be used to cross-index data as well. Currently CCD 1 for all cameras is being used as a benchmark.
     - Not all camera's will have quaternions at all times.  NaN's have been introduced where this data is unavailable.  In this event other cameras are used for guiding (typically cameras 1 & 4 will be used to guide TESS).
-    
+
+### tessvectors processing
+The functionality to create the tessvectors files may be found in the [processing/](src/tessvectors/processing/) subpackage.  Please see the processing [README](src/tessvectors/processing/README.md) for further information.  
+
 ### Credits
 
 Initial development done by [Tyler Pritchard](https://github.com/tylerapritchard), [Christina Hedges](https://github.com/christinahedges) the [TESS Science Support Center](https://heasarc.gsfc.nasa.gov/docs/tess/), and the [MIT TESS Science Operations Team](https://tess.mit.edu/). 

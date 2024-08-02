@@ -734,7 +734,9 @@ class makevectors(object):
 
     def write_file_header(self, fname, Sector, Camera, Cadence):
         with open(fname, "w") as f:
-            f.write(f"# TESSVector: TESS Engineering Data downsampled to end-user cadences\n")
+            f.write(
+                f"# TESSVector: TESS Engineering Data downsampled to end-user cadences\n"
+            )
             f.write(f"# Sector: \t{Sector}\n")
             f.write(f"# Camera: \t{Camera}\n")
             f.write(f"# Cadence:\t{Cadence}\n")
@@ -768,7 +770,8 @@ class makevectors(object):
             f.write(
                 f"# MidTime: The CCD1 exposure midpoint in spacecraft time (e.g. 'TIME' - 'TIMECORR from a SPOC TPF)'. \n"
             )
-            f.write(f"     - Other CCDs will have small (~0.2-1)s offsets from this due this due to sequential reads.\n"
+            f.write(
+                f"     - Other CCDs will have small (~0.2-1)s offsets from this due this due to sequential reads.\n"
             )
             f.write(
                 f"# Quat_Start: The timestamp of the earliest quaternion used in the bin\n"
@@ -848,7 +851,7 @@ class makevectors(object):
             if Time is not None:
                 # Make the directory Structure if it does not exist
                 self.make_dir_structure()
-                
+
                 # First write the File Header
                 # this will over-write by default
                 self.write_file_header(fname, Sector, Camera, self.typedict[i])
@@ -910,7 +913,7 @@ class makevectors(object):
             files_exist = True
             for item in product(i, np.atleast_1d(Camera)):
                 file_check = os.path.isfile(
-                    self._vector_file(self.typedict[item[0]], Sector, item[1])+'.xz'
+                    self._vector_file(self.typedict[item[0]], Sector, item[1]) + ".xz"
                 )
                 files_exist = files_exist and file_check
 
@@ -925,7 +928,8 @@ class makevectors(object):
                     camera_files_exist = True
                     for item in product(i, np.atleast_1d(Camera)):
                         camera_file_check = os.path.isfile(
-                            self._vector_file(self.typedict[item[0]], Sector, item[1])+'.xz'
+                            self._vector_file(self.typedict[item[0]], Sector, item[1])
+                            + ".xz"
                         )
 
                         camera_files_exist = camera_files_exist and camera_file_check

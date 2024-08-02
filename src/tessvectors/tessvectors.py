@@ -9,6 +9,7 @@ import multiprocessing as mp
 import numpy as np
 from .processing.makevectors import makevectors
 from .processing.diagnostics import diagnostics
+
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 log = logging.getLogger("tessvectors")
 log.setLevel(logging.INFO)
@@ -29,9 +30,7 @@ def _get_Cadence_Sector_Camera(hdu):
 
 
 def _resolve_remote_file(Cadence, Sector, Camera):
-    remote_base = (
-        "https://heasarc.gsfc.nasa.gov/docs/tess/data/TESSVectors/Vectors/"
-    )
+    remote_base = "https://heasarc.gsfc.nasa.gov/docs/tess/data/TESSVectors/Vectors/"
     cadence_folder = f"{Cadence}_Cadence/"
     file_base = f"TessVectors_S{Sector:03d}_C{Camera}_{Cadence}.xz"
     fname = remote_base + cadence_folder + file_base
@@ -63,20 +62,20 @@ def getvector(arg, Cadence=None, Sector=None, Camera=None, download=False):
     vector = pd.read_csv(fname, comment="#", index_col=False)
 
     if download:
-        output_file = makevectors()._vector_base_file(
-            Cadence, Sector, Camera
-        )
+        output_file = makevectors()._vector_base_file(Cadence, Sector, Camera)
         # lets assume people want uncompressed csv files by default
         output_file = f"{output_file}.csv"
         logging.info(f"Writing TESSVector to: {fname}")
-        makevectors().write_file_header(
-            output_file, Sector, Camera, Cadence
-        )
+        makevectors().write_file_header(output_file, Sector, Camera, Cadence)
         vector.to_csv(output_file, mode="a", compression=None)
 
     return vector
 
-_mast_uri_base = f"https://mast.stsci.edu/api/v0.1/Download/file/?uri=mast:TESS/product/"
+
+_mast_uri_base = (
+    f"https://mast.stsci.edu/api/v0.1/Download/file/?uri=mast:TESS/product/"
+)
+
 
 def getffi(arg, download=False):
     if isinstance(arg, tuple):
@@ -85,24 +84,27 @@ def getffi(arg, download=False):
             sector = arg[1]
             camera = arg[2]
             ccd = arg[3]
-    ffi_vector = getvector(('FFI',sector,camera))
+    ffi_vector = getvector(("FFI", sector, camera))
     closest_ind = np.argmin(abs(midtime - ffi_vector.MidTime))
     ffi_name = ffi_vector.iloc[closest_ind].FFIFile
     ffi_name = f"{ffi_name.split('{')[0]}{ccd}{ffi_name.split('}')[1]}"
     ffi_file = f"{_mast_uri_base}{ffi_name}"
-    if(download):
-        #download this file.  wget?  lksearch? hdu>? 
+    if download:
+        # download this file.  wget?  lksearch? hdu>?
         raise NotImplementedError
     return ffi_file
+
 
 #
 def decompress(filein, fileout):
     import lzma
+
     with lzma.open(filein, mode="rb") as f:
         data = f.read()
-    with open(fileout, 'wb'):
+    with open(fileout, "wb"):
         f.write(data)
     return data
+
 
 ### Multiprocessing & convenience functions
 def process_sector(Sector):
