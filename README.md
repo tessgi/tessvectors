@@ -17,6 +17,8 @@ We have a [tutorial notebook](docs/tessvectors_tutorial.ipynb) on how to interac
 
 We also have a  [demo notebook](docs/tessvectors_demo.ipynb) that demonstrates a few things you can do with the information contained in these files.
 
+A demonstration of products can be found in the [Products](Products/) folder.  
+
 ## tessvectors usage
 tessvectors vector files can be downloaded from https://heasarc.gsfc.nasa.gov/docs/tess/data/TESSVectors/ and read in using `pandas.read_csv`.  The `tessvectors` package can be installed using:
 
