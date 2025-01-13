@@ -101,7 +101,7 @@ def decompress(filein, fileout):
 
     with lzma.open(filein, mode="rb") as f:
         data = f.read()
-    with open(fileout, "wb"):
+    with open(fileout, "wb") as f:
         f.write(data)
     return data
 
