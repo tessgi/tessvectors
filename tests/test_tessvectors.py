@@ -9,6 +9,7 @@ def test_getvector():
     # can we get a vector via specifying a Cadence, Sector Camera
     df = tessvectors.getvector(("FFI", 1, 4))
     assert isinstance(df, pd.DataFrame)
+    assert df["Cadence"][0] == 0.0  # Make sure theres data in the DF
 
     tpf = lk.search_targetpixelfile(
         "Pi Men C", sector=1, exptime="short", author="SPOC"

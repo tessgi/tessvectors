@@ -47,6 +47,7 @@ class makevectors(object):
         TESSVectors_Local_tpf_short_path="SourceData/short/",
         TESSVectors_Local_tpf_ffi_path="SourceData/FFI/",
         check_exists=True,
+        compression=False,
     ):
         self.TESSVectors_Products_Base = TESSVectors_Products_Base
         self.TESSVectos_local = TESSVectos_local
@@ -55,8 +56,14 @@ class makevectors(object):
         self.TESSVectors_Local_tpf_short_path = TESSVectors_Local_tpf_short_path
         self.TESSVectors_Local_tpf_ffi_path = TESSVectors_Local_tpf_ffi_path
         self.check_exists = check_exists
-
         self.typedict = {1: "020", 2: "120", 3: "FFI"}
+        self.cutoff_20s = 27  # No 20s data before cycle_whatever
+        self.max_sector = 87
+        self.compression = compression
+        if not compression:
+            self.vector_extenstion = ".csv"
+        else:
+            self.vector_extenstion = ".xz"
 
     def make_dir_structure(self):
         os.makedirs(self.TESSVectors_Products_Base, exist_ok=True)
@@ -105,6 +112,7 @@ class makevectors(object):
             capture_output=True,
             text=True,
         )
+        print(point)
         ra = float(point.stdout.split(" ")[0])
         dec = float(point.stdout.split(" ")[1])
         return ra, dec
@@ -288,7 +296,6 @@ class makevectors(object):
 
         Returns midpoints, segmentslabels, and ffilist arrays
         """
-        cutoff_20s = 27  # No 20s data before cycle_whatever
         CCD_List = [1]  # (1,2,3,4)
         # write now we're checking that each CCD has the same timearr for each product
         # once we're done with that - we can can use only CCD 1 or whatever
@@ -314,7 +321,7 @@ class makevectors(object):
         )
 
         # update variable name, midpoint is now a list of objects including the midpoints
-        if Sector >= cutoff_20s:
+        if Sector >= self.cutoff_20s:
             # Get high-cadence 20s timing
             log.info(
                 f"\t\tGetting 20s Cadence Midpoints Sector: {Sector} Camera: {Camera}"
@@ -771,7 +778,7 @@ class makevectors(object):
                 f"# MidTime: The CCD1 exposure midpoint in spacecraft time (e.g. 'TIME' - 'TIMECORR from a SPOC TPF)'. \n"
             )
             f.write(
-                f"     - Other CCDs will have small (~0.2-1)s offsets from this due this due to sequential reads.\n"
+                f"#     - Other CCDs will have small (~0.2-1)s offsets from this due this due to sequential reads.\n"
             )
             f.write(
                 f"# Quat_Start: The timestamp of the earliest quaternion used in the bin\n"
@@ -842,7 +849,9 @@ class makevectors(object):
             fname_root = self._vector_file(self.typedict[i], Sector, Camera).split(".")[
                 0
             ]
-            fname = fname_root + ".xz"
+
+            fname = fname_root + self.vector_extenstion
+
             log.info(
                 f"\t\tWriting Sector: {Sector} Camera: {Camera} Cadence {self.typedict[i]} to:"
             )
@@ -892,20 +901,23 @@ class makevectors(object):
                 if i == 3:
                     df["FFIFile"] = FFIList
 
-                df.to_csv(fname, index=False, mode="a", compression=None)
-
-                df = pd.read_csv(fname, comment="#", index_col=False, compression=None)
-                df.to_csv(fname, index=False, mode="w", compression="xz")
+                if not self.compression:
+                    df.to_csv(fname, index=False, mode="a", compression=None)
+                else:
+                    df.to_csv(fname, index=False, mode="a", compression=None)
+                    df = pd.read_csv(
+                        fname, comment="#", index_col=False, compression=None
+                    )
+                    df.to_csv(fname, index=False, mode="w", compression="xz")
 
     def create_vectors_sector(self, Sector, check_exists=True):
         """For a given sector, create TESSVectors Information and write to a CSV file"""
         # assume that files don't exist, unless we're checking.  could rename this overwrite?
         files_exist = False
-        cutoff_20s = 27
         if check_exists & self.check_exists:
             Camera = [1, 2, 3, 4]
 
-            if Sector >= cutoff_20s:
+            if Sector >= self.cutoff_20s:
                 i = [1, 2, 3]
             else:
                 i = [2, 3]
@@ -913,7 +925,8 @@ class makevectors(object):
             files_exist = True
             for item in product(i, np.atleast_1d(Camera)):
                 file_check = os.path.isfile(
-                    self._vector_file(self.typedict[item[0]], Sector, item[1]) + ".xz"
+                    self._vector_file(self.typedict[item[0]], Sector, item[1])
+                    + self.vector_extenstion
                 )
                 files_exist = files_exist and file_check
 
@@ -923,13 +936,13 @@ class makevectors(object):
             EMIData = self.get_eng_data(Sector, "emi")
 
             for Camera in [1, 2, 3, 4]:
-                camera_files_exist = True
+                camera_files_exist = False
                 if check_exists & self.check_exists:
                     camera_files_exist = True
                     for item in product(i, np.atleast_1d(Camera)):
                         camera_file_check = os.path.isfile(
                             self._vector_file(self.typedict[item[0]], Sector, item[1])
-                            + ".xz"
+                            + self.vector_extenstion
                         )
 
                         camera_files_exist = camera_files_exist and camera_file_check
@@ -948,3 +961,29 @@ class makevectors(object):
 
         else:
             log.info(f"Sector: {Sector} files exist, skipping")
+
+    def validate_vectors(self, max_sector=87):
+        camera = [1, 2, 3, 4]
+        cadence_type = [1, 2, 3]
+        vectors_complete = True
+        for sector in range(1, max_sector):
+            sector_complete = True
+            for cadence in cadence_type:
+                for cam in camera:
+                    if (self.typedict[cadence] != "020") or (
+                        self.typedict[cadence] == "020" and sector > self.cutoff_20s
+                    ):
+                        file_check = (
+                            self._vector_file(self.typedict[cadence], sector, cam)
+                            + self.vector_extenstion
+                        )
+                        if not os.path.isfile(file_check):
+                            logging.warning(f"Sector {sector} {file_check} is missing!")
+                            sector_complete = False
+                            vectors_complete = False
+            if not sector_complete:
+                logging.warning(f"Sector {sector} INCOMPLETE!")
+        if vectors_complete:
+            logging.log(f"Vectors Complete to Sector {max_sector}")
+        else:
+            logging.warning(f"Vectors INCOMPLETE!")

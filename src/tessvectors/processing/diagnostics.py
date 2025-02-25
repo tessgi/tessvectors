@@ -39,6 +39,7 @@ class diagnostics(object):
         TESSVectors_Local_tpf_short_path="SourceData/short/",
         TESSVectors_Local_tpf_ffi_path="SourceData/FFI/",
         check_exists=True,
+        compression=False,
     ):
         self.TESSVectors_Products_Base = TESSVectors_Products_Base
         self.TESSVectos_local = TESSVectos_local
@@ -48,7 +49,13 @@ class diagnostics(object):
         self.TESSVectors_Local_tpf_ffi_path = TESSVectors_Local_tpf_ffi_path
         self.check_exists = check_exists
         self.typedict = {1: "020", 2: "120", 3: "FFI"}
-        self.vector_extenstion = ".xz"
+        self.compression = compression
+
+        if not compression:
+            self.vector_extenstion = ".csv"
+        else:
+            self.vector_extenstion = ".xz"
+
         makevectors().make_dir_structure()
 
     def create_diagnostics_sector(self, Sector):
@@ -62,6 +69,7 @@ class diagnostics(object):
                     self.create_diagnostic_timeseries(Sector, Camera, Cadence)
                     # Should I create the periodograms from the "raw" 2s data?  probably?
                     self.create_diagnostic_emi(Sector, Camera, Cadence)
+
             except:
                 print(f"Sector {Sector} Diagnostics Failed")
 
@@ -236,10 +244,20 @@ class diagnostics(object):
             makevectors()._vector_file(cadence_name, Sector, Camera)
             + self.vector_extenstion
         )
-
         nplots = 3
         if os.path.isfile(fname):
-            quatdf = pd.read_csv(fname, comment="#", index_col=False, compression="xz")
+            if not self.compression:
+                quatdf = pd.read_csv(
+                    fname, comment="#", index_col=False, low_memory=False
+                )
+            else:
+                quatdf = pd.read_csv(
+                    fname,
+                    comment="#",
+                    index_col=False,
+                    compression="xz",
+                    low_memory=False,
+                )
             fig, axs = plt.subplots(nplots, 1, figsize=(15, nplots * 10))
             self.plot_lsperiodogram(
                 axs[0],
@@ -300,7 +318,18 @@ class diagnostics(object):
 
         nplots = 3
         if os.path.isfile(fname) and cadence_name == "FFI":
-            quatdf = pd.read_csv(fname, comment="#", index_col=False, compression="xz")
+            if not self.compression:
+                quatdf = pd.read_csv(
+                    fname, comment="#", index_col=False, low_memory=False
+                )
+            else:
+                quatdf = pd.read_csv(
+                    fname,
+                    comment="#",
+                    index_col=False,
+                    compression="xz",
+                    low_memory=False,
+                )
 
             # qual_im = self._quality_to_color(quatdf.Quality)
             qual_im = None

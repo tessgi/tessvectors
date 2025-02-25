@@ -32,8 +32,9 @@ def _get_Cadence_Sector_Camera(hdu):
 def _resolve_remote_file(Cadence, Sector, Camera):
     remote_base = "https://heasarc.gsfc.nasa.gov/docs/tess/data/TESSVectors/Vectors/"
     cadence_folder = f"{Cadence}_Cadence/"
-    file_base = f"TessVectors_S{Sector:03d}_C{Camera}_{Cadence}.xz"
-    fname = remote_base + cadence_folder + file_base
+    file_base = f"TessVectors_S{Sector:03d}_C{Camera}_{Cadence}"
+    file_ext = ".csv"
+    fname = remote_base + cadence_folder + file_base + file_ext
     return fname
 
 
@@ -123,7 +124,7 @@ def process_sector(Sector):
     return (Sector, True)
 
 
-def run_bulk_vectors(sector_min=1, sector_max=78, processes=7):
+def run_bulk_vectors(sector_min=1, sector_max=87, processes=7):
     if not processes:
         processes = 7
     sector_list = range(sector_min, sector_max)
@@ -136,7 +137,7 @@ def run_bulk_vectors(sector_min=1, sector_max=78, processes=7):
     pool.close()
 
 
-def run_bulk_processing(sector_min=1, sector_max=78):
+def run_bulk_processing(sector_min=1, sector_max=87):
     sector_list = range(sector_min, sector_max)
     pool = Pool(processes=mp.cpu_count())
     res = []
@@ -145,7 +146,7 @@ def run_bulk_processing(sector_min=1, sector_max=78):
     pool.close()
 
 
-def run_bulk_diagnostics(self, sector_min=1, sector_max=78, processes=7):
+def run_bulk_diagnostics(sector_min=1, sector_max=87, processes=7):
     if not processes:
         processes = 7
     sector_list = range(sector_min, sector_max)
