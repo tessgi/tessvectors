@@ -1,8 +1,10 @@
 # tessvectors 
 
 # PRE-RELEASE 
-0.1.0 - Open Beta 
-
+0.1.1 - Removed Vector Compression by default
+        - updated vectors location
+        - bugfix, added tests
+0.1.0 - Open Beta Release
 ## A repository that takes Transiting Exoplanet Survey Satelitte (TESS) engineering data and transforms it into convenient value-added products for use in lightcurve detrending, image characterising, and more.   
 
 ## tessvectors Introduction
